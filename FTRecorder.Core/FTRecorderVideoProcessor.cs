@@ -14,8 +14,12 @@ namespace Riry.RiryTools.FTRecorder
         internal string BabbleModel;
         internal string BabbleLabels;
         internal float BabbleCropScale = 1f;
-        /// <summary>An OVRLipSync library; null for the FTRecorder classifier.</summary>
+        /// <summary>An OVRLipSync library; null to use VRChat's copy.</summary>
         internal string OvrLipSync;
+        /// <summary>Use the FTRecorder classifier instead of OVRLipSync.</summary>
+        internal bool Classifier;
+        /// <summary>Asked for an OVRLipSync path, with the reason, when none loads; returns null or empty to give up.</summary>
+        internal Func<string, string> AskForOvrLipSync;
         /// <summary>Frames per second taken from the video.</summary>
         internal double Fps = 30;
         /// <summary>The side of the square frames are fitted into, in pixels.</summary>
@@ -36,15 +40,26 @@ namespace Riry.RiryTools.FTRecorder
             if (!File.Exists(options.Video)) throw new FileNotFoundException("The video was not found.", options.Video);
             if (File.Exists(options.Output)) throw new IOException("The output already exists: " + options.Output);
 
-            progress?.Invoke("Reading audio");
-            short[] audio = FTRecorderFfmpeg.ReadAudio(options.Ffmpeg, options.Video, cancel);
-            List<FTRecorderVisemeFrame> visemes = new List<FTRecorderVisemeFrame>();
-            string engine = "none (no audio)";
-            if (audio.Length > 0)
+            // OVRLipSync is found (or asked for) before any work, so a missing library stops the run at once.
+            FTRecorderOvrLipSync lipSync = null;
+            string engine = FTRecorderVisemeGenerator.Classifier;
+            if (!options.Classifier)
             {
-                progress?.Invoke("Making visemes");
-                visemes = FTRecorderVisemeGenerator.Generate(audio, options.OvrLipSync, out engine, out string note);
-                if (note != null) progress?.Invoke(note);
+                lipSync = FTRecorderVisemeGenerator.Open(options.OvrLipSync, options.AskForOvrLipSync, out string loaded);
+                engine = FTRecorderVisemeGenerator.OvrLipSync;
+                progress?.Invoke("OVRLipSync: " + loaded);
+            }
+            List<FTRecorderVisemeFrame> visemes = new List<FTRecorderVisemeFrame>();
+            using (lipSync)
+            {
+                progress?.Invoke("Reading audio");
+                short[] audio = FTRecorderFfmpeg.ReadAudio(options.Ffmpeg, options.Video, cancel);
+                if (audio.Length == 0) engine = "none (no audio)";
+                else
+                {
+                    progress?.Invoke("Making visemes");
+                    visemes = lipSync != null ? FTRecorderVisemeGenerator.WithOvrLipSync(lipSync, audio) : FTRecorderVisemeGenerator.WithClassifier(audio);
+                }
             }
 
             using var tracker = new FTRecorderFaceTracker(options.BabbleModel, options.BabbleLabels, options.BabbleCropScale, options.Threads);
@@ -88,9 +103,10 @@ namespace Riry.RiryTools.FTRecorder
 // GLOSSARY: FTRecorder video processor
 // ============================================================================
 //
-// FTRecorderVideoOptions (this file)  Video, Output, Ffmpeg, BabbleModel, BabbleLabels, BabbleCropScale, OvrLipSync,
-//                            Fps (30), Size (640), Threads (2).
+// FTRecorderVideoOptions (this file)  Video, Output, Ffmpeg, BabbleModel, BabbleLabels, BabbleCropScale, OvrLipSync
+//                            (null: VRChat's copy), Classifier, AskForOvrLipSync, Fps (30), Size (640), Threads (2).
 // FTRecorderVideoProcessor
-//   Process(options, progress, cancel)  Audio first (16 kHz mono, visemes from FTRecorderVisemeGenerator), then each
+//   Process(options, progress, cancel)  OVRLipSync opened first (FTRecorderVisemeGenerator.Open) unless Classifier;
+//                            then audio (16 kHz mono, visemes), then each
 //                            frame through FTRecorderFaceTracker; one recording with expressions and visemes in time
 //                            order. Frames with no face are left out. The source line names the models and engine.

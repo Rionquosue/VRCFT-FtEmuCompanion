@@ -12,4 +12,4 @@ Microsoft.ML.OnnxRuntime, Copyright Microsoft Corporation. MIT License: https://
 
 ## Not included
 
-The Babble face model, OVRLipSync and ffmpeg are not part of this project. They are loaded from paths you set, under their own licences.
+The Babble face model, OVRLipSync and ffmpeg are not part of this project. They are loaded from paths you set (OVRLipSync, by default, from your VRChat install), under their own licences.
