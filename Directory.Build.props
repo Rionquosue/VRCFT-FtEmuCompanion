@@ -1,0 +1,19 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>Riry.RiryTools.FTRecorder</RootNamespace>
+    <Version>0.1.0</Version>
+    <OnnxRuntimeVersion>1.32.0</OnnxRuntimeVersion>
+  </PropertyGroup>
+  <!-- The shared code is compiled into each project, so the module has no extra DLL of its own to resolve. -->
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)FTRecorder.Core\*.cs" Link="Core\%(Filename)%(Extension)" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="$(OnnxRuntimeVersion)" />
+    <None Include="$(MSBuildThisFileDirectory)Models\*.*" Link="Models\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="$(MSBuildThisFileDirectory)NOTICE.md" Link="NOTICE.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

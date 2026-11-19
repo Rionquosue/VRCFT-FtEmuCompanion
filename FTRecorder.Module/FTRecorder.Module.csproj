@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The VRCFaceTracking module. Build the install zip with:
+      dotnet publish FTRecorder.Module -c Release -r win-x64 -p:VrcftDir=<folder with VRCFaceTracking.Core.dll and VRCFaceTracking.SDK.dll>
+    The zip is written to FTRecorder.Module/bin/RiryTools.FTRecorder.Module-<rid>.zip.
+  -->
+  <PropertyGroup>
+    <AssemblyName>RiryTools.FTRecorder.Module</AssemblyName>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <SelfContained>false</SelfContained>
+    <VrcftDir Condition="'$(VrcftDir)' == ''">$(MSBuildThisFileDirectory)..\VRCFaceTracking</VrcftDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- VRCFaceTracking provides these at run time: compile against them, never ship them. -->
+    <Reference Include="VRCFaceTracking.SDK">
+      <HintPath>$(VrcftDir)\VRCFaceTracking.SDK.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="VRCFaceTracking.Core">
+      <HintPath>$(VrcftDir)\VRCFaceTracking.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.1" ExcludeAssets="runtime" />
+    <None Include="module.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <!-- Shared code the module does not use (video processing, visemes, discovery) stays out of it. -->
+    <Compile Remove="$(MSBuildThisFileDirectory)..\FTRecorder.Core\FTRecorderVideoProcessor.cs;$(MSBuildThisFileDirectory)..\FTRecorder.Core\FTRecorderViseme*.cs;$(MSBuildThisFileDirectory)..\FTRecorder.Core\FTRecorderOvrLipSync.cs;$(MSBuildThisFileDirectory)..\FTRecorder.Core\FTRecorderDnsPacket.cs" />
+  </ItemGroup>
+  <Target Name="FTRecorderZip" AfterTargets="Publish">
+    <!-- Import libraries and symbols are not needed to run. -->
+    <ItemGroup>
+      <FTRecorderUnneeded Include="$(PublishDir)*.lib;$(PublishDir)*.pdb" />
+    </ItemGroup>
+    <Delete Files="@(FTRecorderUnneeded)" />
+    <ZipDirectory SourceDirectory="$(PublishDir)" DestinationFile="$(MSBuildThisFileDirectory)bin\RiryTools.FTRecorder.Module-$(RuntimeIdentifier).zip" Overwrite="true" />
+    <Message Importance="high" Text="Module zip: $(MSBuildThisFileDirectory)bin\RiryTools.FTRecorder.Module-$(RuntimeIdentifier).zip" />
+  </Target>
+</Project>

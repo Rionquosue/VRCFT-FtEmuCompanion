@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The companion app: dotnet publish FTRecorder.Companion -c Release -r win-x64 -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>RiryTools.FTRecorder</AssemblyName>
+  </PropertyGroup>
+</Project>

@@ -1,0 +1,11 @@
+{
+  "ModuleId": "123bbc21-eaf2-4e7c-bb8b-536da30cc66c",
+  "Version": "0.1.0",
+  "AuthorName": "Riry",
+  "ModuleName": "RiryTools FTRecorder",
+  "ModuleDescription": "Face tracking from a recording, a video file, a webcam (MediaPipe, optionally a Babble model you have) or the Babble app, with recording of everything it sends.",
+  "UsageInstructions": "Settings: %LocalAppData%\\RiryTools\\FTRecorder\\module-config.json (written on first start; changes apply while running). source: playback, video, webcam or babbleOsc. record: true writes recordings to recordingsFolder. Video and webcam need ffmpeg (ffmpegPath). The companion app records VRCFaceTracking's output and VRChat's visemes, and turns videos into recordings.",
+  "ModulePageUrl": "https://github.com/Rionquosue/VRCFT-FtEmuCompanion",
+  "DownloadUrl": "https://github.com/Rionquosue/VRCFT-FtEmuCompanion",
+  "DllFileName": "RiryTools.FTRecorder.Module.dll"
+}
