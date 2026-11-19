@@ -20,6 +20,8 @@ namespace Riry.RiryTools.FTRecorder
         internal bool Classifier;
         /// <summary>Asked for an OVRLipSync path, with the reason, when none loads; returns null or empty to give up.</summary>
         internal Func<string, string> AskForOvrLipSync;
+        /// <summary>Viseme and Voice already taken from VRChat (times from the start of the audio); null to make visemes here.</summary>
+        internal List<FTRecorderEntry> VrchatVisemes;
         /// <summary>Frames per second taken from the video.</summary>
         internal double Fps = 30;
         /// <summary>The side of the square frames are fitted into, in pixels.</summary>
@@ -42,23 +44,27 @@ namespace Riry.RiryTools.FTRecorder
 
             // OVRLipSync is found (or asked for) before any work, so a missing library stops the run at once.
             FTRecorderOvrLipSync lipSync = null;
-            string engine = FTRecorderVisemeGenerator.Classifier;
-            if (!options.Classifier)
+            string engine = options.VrchatVisemes != null ? "VRChat (OSC)" : FTRecorderVisemeGenerator.Classifier;
+            if (options.VrchatVisemes == null && !options.Classifier)
             {
                 lipSync = FTRecorderVisemeGenerator.Open(options.OvrLipSync, options.AskForOvrLipSync, out string loaded);
                 engine = FTRecorderVisemeGenerator.OvrLipSync;
                 progress?.Invoke("OVRLipSync: " + loaded);
             }
             List<FTRecorderVisemeFrame> visemes = new List<FTRecorderVisemeFrame>();
-            using (lipSync)
+            // Visemes taken from VRChat need nothing made here.
+            if (options.VrchatVisemes == null)
             {
-                progress?.Invoke("Reading audio");
-                short[] audio = FTRecorderFfmpeg.ReadAudio(options.Ffmpeg, options.Video, cancel);
-                if (audio.Length == 0) engine = "none (no audio)";
-                else
+                using (lipSync)
                 {
-                    progress?.Invoke("Making visemes");
-                    visemes = lipSync != null ? FTRecorderVisemeGenerator.WithOvrLipSync(lipSync, audio) : FTRecorderVisemeGenerator.WithClassifier(audio);
+                    progress?.Invoke("Reading audio");
+                    short[] audio = FTRecorderFfmpeg.ReadAudio(options.Ffmpeg, options.Video, cancel);
+                    if (audio.Length == 0) engine = "none (no audio)";
+                    else
+                    {
+                        progress?.Invoke("Making visemes");
+                        visemes = lipSync != null ? FTRecorderVisemeGenerator.WithOvrLipSync(lipSync, audio) : FTRecorderVisemeGenerator.WithClassifier(audio);
+                    }
                 }
             }
 
@@ -71,12 +77,14 @@ namespace Riry.RiryTools.FTRecorder
                 var frame = new FTRecorderFrame(options.Size, options.Size);
                 var unified = new float[FTRecorderExpressionMap.UnifiedNames.Length];
                 var eye = new float[FTRecorderExpressionMap.EyeNames.Length];
-                int next = 0;
+                int next = 0, nextVrchat = 0;
+                List<FTRecorderEntry> vrchat = options.VrchatVisemes ?? new List<FTRecorderEntry>();
                 while (video.ReadFrame(frame))
                 {
                     cancel.ThrowIfCancellationRequested();
                     double time = frames / options.Fps;
                     for (; next < visemes.Count && visemes[next].Time <= time; next++) WriteViseme(writer, visemes[next]);
+                    for (; nextVrchat < vrchat.Count && vrchat[nextVrchat].Time <= time; nextVrchat++) WriteParameter(writer, vrchat[nextVrchat]);
                     if (tracker.TryTrack(frame, unified, eye))
                     {
                         writer.WriteExpressions(time, unified, eye);
@@ -86,10 +94,16 @@ namespace Riry.RiryTools.FTRecorder
                     if (frames % 150 == 0) progress?.Invoke("Frame " + frames + " (" + time.ToString("0.0") + " s), face in " + faces);
                 }
                 for (; next < visemes.Count; next++) WriteViseme(writer, visemes[next]);
-                written = visemes.Count;
+                for (; nextVrchat < vrchat.Count; nextVrchat++) WriteParameter(writer, vrchat[nextVrchat]);
+                written = visemes.Count + vrchat.Count;
                 if (frames == 0) throw new InvalidDataException("ffmpeg gave no video frames. " + video.Errors);
             }
-            return frames + " frames, a face in " + faces + "; " + written + " viseme frames (" + engine + ").";
+            return frames + " frames, a face in " + faces + "; " + written + (options.VrchatVisemes != null ? " VRChat viseme values" : " viseme frames") + " (" + engine + ").";
+        }
+
+        private static void WriteParameter(FTRecorderRecordingWriter writer, FTRecorderEntry entry)
+        {
+            writer.WriteParameter(entry.Time, entry.Name, entry.Type, entry.Value);
         }
 
         private static void WriteViseme(FTRecorderRecordingWriter writer, FTRecorderVisemeFrame frame)
@@ -104,7 +118,8 @@ namespace Riry.RiryTools.FTRecorder
 // ============================================================================
 //
 // FTRecorderVideoOptions (this file)  Video, Output, Ffmpeg, BabbleModel, BabbleLabels, BabbleCropScale, OvrLipSync
-//                            (null: VRChat's copy), Classifier, AskForOvrLipSync, Fps (30), Size (640), Threads (2).
+//                            (null: VRChat's copy), Classifier, AskForOvrLipSync, VrchatVisemes (taken from VRChat
+//                            beforehand; then nothing is made here), Fps (30), Size (640), Threads (2).
 // FTRecorderVideoProcessor
 //   Process(options, progress, cancel)  OVRLipSync opened first (FTRecorderVisemeGenerator.Open) unless Classifier;
 //                            then audio (16 kHz mono, visemes), then each

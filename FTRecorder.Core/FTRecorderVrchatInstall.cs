@@ -17,6 +17,14 @@ namespace Riry.RiryTools.FTRecorder
         private static readonly Regex LibraryPath = new Regex("\"path\"\\s+\"((?:[^\"\\\\]|\\\\.)*)\"", RegexOptions.CultureInvariant);
         private static readonly Regex InstallDir = new Regex("\"installdir\"\\s+\"((?:[^\"\\\\]|\\\\.)*)\"", RegexOptions.CultureInvariant);
 
+        /// <summary>True while a VRChat process is running on this computer (Windows; VRChat under Proton is not seen).</summary>
+        internal static bool IsRunning()
+        {
+            System.Diagnostics.Process[] found = System.Diagnostics.Process.GetProcessesByName("VRChat");
+            foreach (System.Diagnostics.Process process in found) process.Dispose();
+            return found.Length > 0;
+        }
+
         /// <summary>The OVRLipSync library of the first VRChat install found, or null. searched lists the VRChat folders looked in.</summary>
         internal static string FindOvrLipSync(out List<string> searched)
         {
@@ -131,6 +139,7 @@ namespace Riry.RiryTools.FTRecorder
 // ============================================================================
 //
 // FTRecorderVrchatInstall (this file)
+//   IsRunning()              A process named VRChat is running (Windows; not seen under Proton).
 //   FindOvrLipSync(out searched)  VRChat_Data/Plugins/x86_64/OVRLipSync.dll, Plugins/OVRLipSync.dll, else any
 //                            *LipSync*.dll under Plugins, in the first VRChat install found; null when none. searched
 //                            lists the VRChat folders looked in.

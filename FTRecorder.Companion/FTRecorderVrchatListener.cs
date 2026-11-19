@@ -24,7 +24,8 @@ namespace Riry.RiryTools.FTRecorder
         private static readonly IPAddress MdnsAddress = IPAddress.Parse("224.0.0.251");
         private static readonly HashSet<string> Kept = new HashSet<string>(StringComparer.Ordinal) { "Viseme", "Voice" };
 
-        private readonly FTRecorderRecordingWriter writer;
+        private readonly Func<double> clock;
+        private readonly Action<double, string, char, float> sink;
         private readonly string name = "RiryTools-FTRecorder-" + Guid.NewGuid().ToString("N").Substring(0, 6);
         private readonly UdpClient osc;
         private readonly TcpListener http;
@@ -39,9 +40,12 @@ namespace Riry.RiryTools.FTRecorder
         /// <summary>False when no network interface could carry the announcement: VRChat cannot find the service.</summary>
         internal bool Discoverable => mdns != null && senders.Count > 0;
 
-        internal FTRecorderVrchatListener(FTRecorderRecordingWriter writer)
+        /// <param name="clock">The time stamp each value gets, in seconds.</param>
+        /// <param name="sink">Gets each kept value: time, name, type ('i', 'f' or 'b') and value.</param>
+        internal FTRecorderVrchatListener(Func<double> clock, Action<double, string, char, float> sink)
         {
-            this.writer = writer;
+            this.clock = clock;
+            this.sink = sink;
             osc = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
             oscPort = ((IPEndPoint)osc.Client.LocalEndPoint).Port;
             http = new TcpListener(IPAddress.Loopback, 0);
@@ -87,7 +91,7 @@ namespace Riry.RiryTools.FTRecorder
                 if (!IPAddress.IsLoopback(remote.Address)) continue;
                 messages.Clear();
                 if (!FTRecorderOscCodec.TryDecode(packet, packet.Length, messages, out _)) continue;
-                double now = writer.Now;
+                double now = clock();
                 foreach (FTRecorderOscMessage message in messages)
                 {
                     if (!message.Address.StartsWith(FTRecorderOscCodec.ParameterPrefix, StringComparison.Ordinal) || message.Arguments.Count != 1) continue;
@@ -96,10 +100,10 @@ namespace Riry.RiryTools.FTRecorder
                     FTRecorderOscArgument argument = message.Arguments[0];
                     switch (argument.Tag)
                     {
-                        case 'i': writer.WriteParameter(now, parameter, 'i', argument.Int); break;
-                        case 'f': writer.WriteParameter(now, parameter, 'f', argument.Float); break;
-                        case 'T': writer.WriteParameter(now, parameter, 'b', 1f); break;
-                        case 'F': writer.WriteParameter(now, parameter, 'b', 0f); break;
+                        case 'i': sink(now, parameter, 'i', argument.Int); break;
+                        case 'f': sink(now, parameter, 'f', argument.Float); break;
+                        case 'T': sink(now, parameter, 'b', 1f); break;
+                        case 'F': sink(now, parameter, 'b', 0f); break;
                         default: continue;
                     }
                     Interlocked.Increment(ref Received);
@@ -344,6 +348,6 @@ namespace Riry.RiryTools.FTRecorder
 //                            RiryTools-FTRecorder-xxxxxx at 127.0.0.1; every 15 s and on any PTR or ANY question.
 //   HTTP                     127.0.0.1 only; GET ?HOST_INFO (NAME, OSC_IP 127.0.0.1, OSC_PORT, UDP) or a tree node:
 //                            /, /avatar, /avatar/change, /avatar/parameters, .../Viseme (i), .../Voice (f). 404 else.
-//   OSC                      127.0.0.1, loopback senders; /avatar/parameters/Viseme and Voice recorded as Parameter
-//                            entries; everything else dropped. Received counts them.
+//   OSC                      127.0.0.1, loopback senders; /avatar/parameters/Viseme and Voice handed to the sink with
+//                            the clock's time; everything else dropped. Received counts them.
 //   Discoverable             False when multicast DNS could not be set up.
