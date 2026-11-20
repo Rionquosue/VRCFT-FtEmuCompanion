@@ -1,6 +1,6 @@
-# Builds the compiled Recorder and companion command line on every push to main (and from the Actions tab), and
-# replaces the files of the rolling "latest" pre-release: RiryTools-FTRecorder.exe (Windows) and
-# RiryTools-FTRecorder-x86_64.AppImage (Linux). packaging/build.py does the building.
+# Builds the compiled Recorder and companion command line and the VRCFaceTracking module on every push to main (and
+# from the Actions tab), and replaces the files of the rolling "latest" pre-release: RiryTools-FTRecorder.exe (Windows),
+# RiryTools-FTRecorder-x86_64.AppImage (Linux) and VRCFT_Module.zip. packaging/build.py builds the app.
 name: Build
 
 on:
@@ -21,6 +21,10 @@ env:
   NUMPY_VERSION: "2.5.4"
   ONNXRUNTIME_VERSION: "1.31.1"
   APPIMAGETOOL_VERSION: "1.9.1"
+  DOTNET_VERSION: "10.0.x"
+  # VRCFaceTracking's own source, built only to compile the module against (its DLLs are not put in the zip).
+  VRCFT_REPOSITORY: benaclejames/VRCFaceTracking
+  VRCFT_COMMIT: 4d8ca2245465e8a07c3e7a6f494db1783616cd3c
 
 jobs:
   windows:
@@ -74,8 +78,35 @@ jobs:
           path: dist/RiryTools-FTRecorder-x86_64.AppImage
           if-no-files-found: error
 
+  module:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/checkout@v4.2.2
+        with:
+          repository: ${{ env.VRCFT_REPOSITORY }}
+          ref: ${{ env.VRCFT_COMMIT }}
+          path: vrcft
+      - uses: actions/setup-dotnet@v4.3.1
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      - name: Build VRCFaceTracking.Core and .SDK
+        run: dotnet build vrcft/VRCFaceTracking.Core/VRCFaceTracking.Core.csproj -c Release -o "${{ runner.temp }}/vrcft"
+      - name: Build the module zip
+        run: dotnet publish FTRecorder.Module -c Release -r win-x64 "-p:VrcftDir=${{ runner.temp }}/vrcft"
+      - name: Name it VRCFT_Module.zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item FTRecorder.Module/bin/RiryTools.FTRecorder.Module-win-x64.zip dist/VRCFT_Module.zip
+      - uses: actions/upload-artifact@v4.6.2
+        with:
+          name: module
+          path: dist/VRCFT_Module.zip
+          if-no-files-found: error
+
   release:
-    needs: [windows, linux]
+    needs: [windows, linux, module]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
@@ -92,8 +123,8 @@ jobs:
           gh release delete latest --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
           gh release create latest --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
             --title "Latest build" \
-            --notes "Built from ${GITHUB_SHA} on main. RiryTools-FTRecorder.exe (Windows) and RiryTools-FTRecorder-x86_64.AppImage (Linux): with no arguments they open the Recorder; with arguments they are the companion command line (process, replay). ffmpeg is not included: install it and add it to PATH, or set its path in the Recorder. See the README." \
-            dist/RiryTools-FTRecorder.exe dist/RiryTools-FTRecorder-x86_64.AppImage
+            --notes "Built from ${GITHUB_SHA} on main. RiryTools-FTRecorder.exe (Windows) and RiryTools-FTRecorder-x86_64.AppImage (Linux): with no arguments they open the Recorder; with arguments they are the companion command line (process, replay). VRCFT_Module.zip: the VRCFaceTracking module, installed in VRCFaceTracking's Module Registry as a local .zip module. ffmpeg is not included: install it and add it to PATH, or set its path in the Recorder and the module's settings. See the README." \
+            dist/RiryTools-FTRecorder.exe dist/RiryTools-FTRecorder-x86_64.AppImage dist/VRCFT_Module.zip
 
 # ============================================================================
 # GLOSSARY: Build workflow
@@ -105,6 +136,9 @@ jobs:
 #                            packaging/build.py -> dist/RiryTools-FTRecorder.exe; --version as a smoke test.
 #   linux                    ubuntu-22.04 (glibc 2.35), the same tools plus appimagetool 1.9.1 ->
 #                            dist/RiryTools-FTRecorder-x86_64.AppImage; --version (extract-and-run) as a smoke test.
-#   release                  main only, after both: deletes the "latest" release and its tag, then creates it again at
-#                            this commit as a pre-release with both files. contents: write for this job only.
+#   module                   windows-latest, .NET 10: VRCFaceTracking.Core and .SDK built from its source at VRCFT_COMMIT
+#                            (to compile against), then FTRecorder.Module published for win-x64; its zip uploaded as
+#                            VRCFT_Module.zip.
+#   release                  main only, after all three: deletes the "latest" release and its tag, then creates it again at
+#                            this commit as a pre-release with the three files. contents: write for this job only.
 #   concurrency              build-latest: a newer push cancels an older run, so releases do not race.

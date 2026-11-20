@@ -26,6 +26,8 @@ namespace Riry.RiryTools.FTRecorder
         private FTRecorderModuleConfig config;
         private FTRecorderSource source;
         private FTRecorderRecordingWriter recorder;
+        private string recordingOutput;
+        private string recordingFfmpeg;
         private FileSystemWatcher watcher;
         private Timer reload;
         private long seen;
@@ -84,25 +86,58 @@ namespace Riry.RiryTools.FTRecorder
         private void ApplyRecording(FTRecorderModuleConfig previous)
         {
             bool folderChanged = previous != null && previous.RecordingsFolder != config.RecordingsFolder;
-            if (recorder != null && (!config.Record || folderChanged))
-            {
-                Logger.LogInformation("Recording saved: {path}", recorder.Path);
-                recorder.Dispose();
-                recorder = null;
-            }
+            // Saving runs ffmpeg: off VRCFaceTracking's thread while it runs.
+            if (recorder != null && (!config.Record || folderChanged)) StopRecording(true);
             if (config.Record && recorder == null)
             {
+                // ffmpeg writes the .mkv: without it, nothing is recorded.
+                try
+                {
+                    FTRecorderFfmpeg.Check(config.FfmpegPath);
+                }
+                catch (FileNotFoundException exception)
+                {
+                    Logger.LogError("Recording not started: {error}", exception.Message);
+                    return;
+                }
                 try
                 {
                     Directory.CreateDirectory(config.RecordingsFolder);
-                    recorder = new FTRecorderRecordingWriter(FTRecorderRecordingWriter.NewPath(config.RecordingsFolder, "module"), "module:" + config.Source);
-                    Logger.LogInformation("Recording to {path}", recorder.Path);
+                    string output = FTRecorderRecordingWriter.NewOutput(config.RecordingsFolder, "module");
+                    recorder = new FTRecorderRecordingWriter(FTRecorderRecordingWriter.WorkingFile(output), "module:" + config.Source);
+                    recordingOutput = output;
+                    recordingFfmpeg = config.FfmpegPath;
+                    Logger.LogInformation("Recording to {path}", output);
                 }
                 catch (Exception exception) when (exception is IOException || exception is UnauthorizedAccessException || exception is ArgumentException)
                 {
                     Logger.LogError("Could not start recording in {folder}: {error}", config.RecordingsFolder, exception.Message);
                 }
             }
+        }
+
+        // Closes the recording and combines it into its .mkv; the working file is deleted once the .mkv is written,
+        // kept (and named in the log) if not.
+        private void StopRecording(bool background)
+        {
+            string working = recorder.Path, output = recordingOutput, ffmpeg = recordingFfmpeg;
+            recorder.Dispose();
+            recorder = null;
+            void Save()
+            {
+                try
+                {
+                    FTRecorderMatroska.WriteRecordingOnly(ffmpeg, working, output);
+                    File.Delete(working);
+                    Logger.LogInformation("Recording saved: {path}", output);
+                }
+                catch (Exception exception) when (exception is InvalidOperationException || exception is IOException || exception is UnauthorizedAccessException)
+                {
+                    Logger.LogError("The .mkv could not be written ({error}); the recording is kept in {path}", exception.Message, working);
+                }
+            }
+            if (background) System.Threading.Tasks.Task.Run(Save);
+            else Save();
         }
 
         private void Watch()
@@ -192,12 +227,8 @@ namespace Riry.RiryTools.FTRecorder
             {
                 source?.Dispose();
                 source = null;
-                if (recorder != null)
-                {
-                    Logger.LogInformation("Recording saved: {path}", recorder.Path);
-                    recorder.Dispose();
-                    recorder = null;
-                }
+                // Saved before VRCFaceTracking unloads the module.
+                if (recorder != null) StopRecording(false);
                 config = null;
             }
         }
@@ -216,4 +247,9 @@ namespace Riry.RiryTools.FTRecorder
 //                            openness when eyes are claimed), and into the recording; source status changes logged.
 //   Reload()                 500 ms after the settings file changes: restarts the source when its settings changed,
 //                            starts or stops recording. A file that does not parse is ignored (logged).
-//   Teardown()               Stops the watcher, the source and the recording (its path logged).
+//   ApplyRecording(previous)  record on: ffmpeg checked (missing: logged, nothing recorded), then module_<time>.mkv's
+//                            working file (NAME.mkv.recording.ftrec.jsonl) written as frames arrive. record off or a new
+//                            folder: StopRecording in the background.
+//   StopRecording(background)  Closes the working file and writes the .mkv (FTRecorderMatroska.WriteRecordingOnly);
+//                            deletes the working file once written, keeps it (logged) if not.
+//   Teardown()               Stops the watcher, the source and the recording (saved to its .mkv before returning).

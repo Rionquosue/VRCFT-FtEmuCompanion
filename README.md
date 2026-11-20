@@ -12,8 +12,9 @@ Every push to `main` builds the Recorder and the companion command line into one
 
 - `RiryTools-FTRecorder.exe` (Windows) and `RiryTools-FTRecorder-x86_64.AppImage` (Linux; `chmod +x` it first). Opened with no arguments, they show the Recorder; with arguments, they are the companion command line (`RiryTools-FTRecorder.exe process --video clip.mp4 --out clip.mkv`).
 - They include Python, numpy, onnxruntime and the face models, so nothing else is installed for them except ffmpeg (below). They are not code-signed, so Windows SmartScreen may ask before the first start.
+- `VRCFT_Module.zip`: the module, built as below. Install it in VRCFaceTracking's Module Registry as a local .zip module.
 
-The Module is built separately (below); `.github/workflows/build.yml` and `packaging/build.py` make the downloads.
+`.github/workflows/build.yml` and `packaging/build.py` make the downloads; the module is compiled against VRCFaceTracking.Core and .SDK built from VRCFaceTracking's source at a pinned commit.
 
 ## Requirements
 
@@ -43,7 +44,7 @@ Settings are in `%LocalAppData%\RiryTools\FTRecorder\module-config.json`, writte
 | Setting | Default | Use |
 |---|---|---|
 | `source` | `webcam` | `playback`, `video`, `webcam` or `babbleOsc`. |
-| `record` | `false` | While `true`, everything the module sends is written to a recording. |
+| `record` | `false` | While `true`, everything the module sends is recorded into `recordingsFolder/module_<date>_<time>.mkv` (the recording attached, with 20 ms of silence as its track). Until recording stops it is kept in `NAME.mkv.recording.ftrec.jsonl`, which is deleted once the `.mkv` is written and kept (named in the log) if not. Needs ffmpeg: checked when recording starts; when it is missing, the log says so and nothing is recorded. |
 | `recordingsFolder` | `Documents\RiryTools FTRecorder` | Where recordings go. |
 | `playbackFile`, `loop` | `""`, `true` | The recording `playback` plays (`.ftrec.jsonl`, or `.mkv` through ffmpeg); `loop` also restarts a video file. |
 | `videoFile` | `""` | The video `video` plays at its own speed. |
@@ -121,7 +122,7 @@ The Recorder and `process` write `.mkv` (Matroska), one file with:
 - **Subtitles ("Visemes"):** one caption per change, holding the viseme's index and name, Voice, and the 15 weights when OVRLipSync or the classifier made them. Any player that shows subtitles (VLC, mpv) shows them with the audio.
 - **Attachment `recording.ftrec.jsonl`:** the whole recording, in the format below. `ffmpeg -dump_attachment:t:0 recording.ftrec.jsonl -i session.mkv -t 0 -f null -` copies it out.
 
-The module's `record` setting writes `.ftrec.jsonl` directly.
+The module's `record` setting writes `.mkv` too, holding only the attached recording (and 20 ms of silence, the track a Matroska file needs).
 
 `.ftrec.jsonl`: one JSON object per line. The first line is the header (`format`, `version`, `source`, `created`, and the `unified` and `eye` value names). Each following line is one entry with its time `t` in seconds:
 

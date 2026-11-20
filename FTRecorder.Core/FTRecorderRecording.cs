@@ -195,14 +195,20 @@ namespace Riry.RiryTools.FTRecorder
             });
         }
 
-        /// <summary>A new file name in folder: prefix, the local date and time, ".ftrec.jsonl".</summary>
-        internal static string NewPath(string folder, string prefix)
+        /// <summary>
+        /// A new .mkv name in folder: prefix, the local date and time, ".mkv"; numbered when it or its working file
+        /// (WorkingFile) is taken.
+        /// </summary>
+        internal static string NewOutput(string folder, string prefix)
         {
             string stamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss", CultureInfo.InvariantCulture);
-            string path = System.IO.Path.Combine(folder, prefix + "_" + stamp + ".ftrec.jsonl");
-            for (int n = 2; File.Exists(path); n++) path = System.IO.Path.Combine(folder, prefix + "_" + stamp + "_" + n + ".ftrec.jsonl");
+            string path = System.IO.Path.Combine(folder, prefix + "_" + stamp + ".mkv");
+            for (int n = 2; File.Exists(path) || File.Exists(WorkingFile(path)); n++) path = System.IO.Path.Combine(folder, prefix + "_" + stamp + "_" + n + ".mkv");
             return path;
         }
+
+        /// <summary>Where a recording is written until it is combined into output (.mkv): output + ".recording.ftrec.jsonl".</summary>
+        internal static string WorkingFile(string output) => output + ".recording.ftrec.jsonl";
 
         internal void WriteExpressions(double time, float[] unified, float[] eye)
         {
@@ -313,6 +319,7 @@ namespace Riry.RiryTools.FTRecorder
 //                            Entries (in written order), Duration (last entry's time).
 // FTRecorderEntry            Time, Kind (Expressions, Osc, Parameter, Viseme) and that kind's fields.
 // FTRecorderRecordingWriter  Writes as it happens, from any thread; flushed at least once a second.
-//   NewPath(folder, prefix)  prefix_yyyy-MM-dd_HH-mm-ss.ftrec.jsonl, numbered when taken.
+//   NewOutput(folder, prefix)  prefix_yyyy-MM-dd_HH-mm-ss.mkv, numbered when it or its working file is taken.
+//   WorkingFile(output)      output + ".recording.ftrec.jsonl": the recording until it is combined into the .mkv.
 //   Now                      Seconds since the writer was made.
 //   WriteExpressions, WriteOsc, WriteParameter, WriteViseme  One line each.

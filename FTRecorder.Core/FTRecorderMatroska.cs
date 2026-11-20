@@ -6,7 +6,8 @@ namespace Riry.RiryTools.FTRecorder
 {
     /// <summary>
     /// The one-file form of a recording: a Matroska (.mkv) file with the whole recording (.ftrec.jsonl) attached, written
-    /// by the Recorder and process (Python, ftrecorder/matroska.py). The module reads it through the user's ffmpeg.
+    /// by the module's record setting (here) and by the Recorder and process (Python, ftrecorder/matroska.py). Written
+    /// and read through the user's ffmpeg.
     /// </summary>
     internal static class FTRecorderMatroska
     {
@@ -20,6 +21,23 @@ namespace Riry.RiryTools.FTRecorder
             var head = new byte[4];
             using var file = File.OpenRead(path);
             return file.Read(head, 0, 4) == 4 && head[0] == Magic[0] && head[1] == Magic[1] && head[2] == Magic[2] && head[3] == Magic[3];
+        }
+
+        /// <summary>
+        /// An .mkv holding only the recording, attached as recording.ftrec.jsonl, with 20 ms of silence as its track (a
+        /// Matroska file needs one). Throws InvalidOperationException with ffmpeg's error when it cannot be written.
+        /// </summary>
+        internal static void WriteRecordingOnly(string ffmpeg, string recording, string output)
+        {
+            var arguments = new List<string>
+            {
+                "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-f", "lavfi", "-t", "0.02", "-i", "anullsrc=r=16000:cl=mono",
+                "-map", "0:a:0", "-c:a", "libopus", "-b:a", "48k",
+                "-attach", recording, "-metadata:s:t:0", "mimetype=" + AttachmentType, "-metadata:s:t:0", "filename=" + AttachmentName,
+                "-f", "matroska", output,
+            };
+            (int code, string errors) = FTRecorderFfmpeg.Run(ffmpeg, arguments, 600000);
+            if (code != 0) throw new InvalidOperationException("ffmpeg could not write " + output + ": " + errors);
         }
 
         /// <summary>Copies the attached recording out of an .mkv into a new temporary file and returns its path.</summary>
@@ -45,7 +63,9 @@ namespace Riry.RiryTools.FTRecorder
 // GLOSSARY: FTRecorder Matroska
 // ============================================================================
 //
-// FTRecorderMatroska (this file)  Reading one-file recordings (.mkv) through the user's ffmpeg (playback source).
+// FTRecorderMatroska (this file)  One-file recordings (.mkv) through the user's ffmpeg.
+//   WriteRecordingOnly(ffmpeg, recording, output)  The module's record setting: 20 ms of silence (Opus) as the track and
+//                            the recording attached as recording.ftrec.jsonl (application/x-ndjson).
 //   ExtractRecording(ffmpeg, mkv)  The attached recording (recording.ftrec.jsonl) copied to a new temporary folder; its
 //                            path.
 //   IsMatroska(path)         The file starts with the EBML magic 1A 45 DF A3.
