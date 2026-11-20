@@ -16,6 +16,20 @@ _HIDDEN = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _ERROR_LIMIT = 8192
 
 
+def _environment() -> dict | None:
+    """The environment ffmpeg starts with. In the compiled Linux app, PyInstaller points LD_LIBRARY_PATH at its own
+    libraries; ffmpeg gets the user's original back, so it loads the system's."""
+    if not getattr(sys, "frozen", False) or os.name == "nt":
+        return None
+    environment = dict(os.environ)
+    original = environment.pop("LD_LIBRARY_PATH_ORIG", None)
+    if original is not None:
+        environment["LD_LIBRARY_PATH"] = original
+    else:
+        environment.pop("LD_LIBRARY_PATH", None)
+    return environment
+
+
 def executable(ffmpeg: str | None) -> str:
     return ffmpeg.strip() if ffmpeg and ffmpeg.strip() else "ffmpeg"
 
@@ -38,7 +52,7 @@ def run(ffmpeg: str | None, arguments: list[str], timeout: float) -> tuple[int, 
     """Runs ffmpeg to the end; its exit code and error output. Raises FfmpegNotFound when it cannot start."""
     try:
         done = subprocess.run([executable(ffmpeg)] + arguments, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                              stderr=subprocess.PIPE, timeout=timeout, creationflags=_HIDDEN)
+                              stderr=subprocess.PIPE, timeout=timeout, creationflags=_HIDDEN, env=_environment())
     except OSError as error:
         raise FfmpegNotFound(not_found(ffmpeg)) from error
     except subprocess.TimeoutExpired as error:
@@ -59,7 +73,7 @@ class Stream:
     def __init__(self, ffmpeg: str | None, arguments: list[str]):
         try:
             self._process = subprocess.Popen([executable(ffmpeg)] + arguments, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                             stderr=subprocess.PIPE, creationflags=_HIDDEN)
+                                             stderr=subprocess.PIPE, creationflags=_HIDDEN, env=_environment())
         except OSError as error:
             raise FfmpegNotFound(not_found(ffmpeg)) from error
         self._errors = []
@@ -220,7 +234,7 @@ def _sources(ffmpeg: str | None, format: str) -> list[tuple[str, str]]:
     """ffmpeg -sources FORMAT: (name, description) pairs; empty when the system or ffmpeg has none."""
     try:
         done = subprocess.run([executable(ffmpeg), "-hide_banner", "-sources", format], stdin=subprocess.DEVNULL,
-                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15, creationflags=_HIDDEN)
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15, creationflags=_HIDDEN, env=_environment())
     except OSError as error:
         raise FfmpegNotFound(not_found(ffmpeg)) from error
     except subprocess.TimeoutExpired:
@@ -241,6 +255,8 @@ def _number(value: float) -> str:
 # ============================================================================
 #
 # ffmpeg (this file)       The user's ffmpeg, without a shell (and without a console window on Windows).
+#   _environment()           Compiled Linux app: LD_LIBRARY_PATH restored from PyInstaller's LD_LIBRARY_PATH_ORIG for
+#                            ffmpeg, so it does not load the bundled libraries.
 #   not_found(ffmpeg), FfmpegNotFound  What was looked for and how to install it.
 #   Cancelled                Raised when a cancel event stops work.
 #   check(ffmpeg)            ffmpeg -version; FfmpegNotFound when it fails.

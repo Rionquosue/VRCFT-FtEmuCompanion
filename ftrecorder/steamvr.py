@@ -67,18 +67,21 @@ def set_auto_launch(on: bool) -> None:
 
 
 def _write_manifest() -> None:
-    """An overlay application (SteamVR only auto-launches those) that starts Recorder.pyw with this Python's pythonw."""
-    python = sys.executable
-    windowless = os.path.join(os.path.dirname(python), "pythonw.exe")
-    manifest = {"applications": [{
-        "app_key": APP_KEY,
-        "launch_type": "binary",
-        "binary_path_windows": windowless if os.path.isfile(windowless) else python,
-        "arguments": '"%s"' % LAUNCHER,
+    """An overlay application (SteamVR only auto-launches those) that starts the compiled .exe, or, run from source,
+    Recorder.pyw with this Python's pythonw."""
+    application = {"app_key": APP_KEY, "launch_type": "binary"}
+    if getattr(sys, "frozen", False):
+        application["binary_path_windows"] = sys.executable
+    else:
+        windowless = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+        application["binary_path_windows"] = windowless if os.path.isfile(windowless) else sys.executable
+        application["arguments"] = '"%s"' % LAUNCHER
+    application.update({
         "is_dashboard_overlay": True,
         "strings": {"en_us": {"name": "RiryTools FTRecorder Recorder",
                               "description": "Relays VRCFaceTracking's OSC output to VRChat and records it on demand."}},
-    }]}
+    })
+    manifest = {"applications": [application]}
     os.makedirs(os.path.dirname(manifest_path()), exist_ok=True)
     with open(manifest_path(), "w", encoding="utf-8") as file:
         json.dump(manifest, file, indent=2)
@@ -136,7 +139,8 @@ def _check(table, error: int, what: str) -> None:
 # steamvr (this file)      The Recorder's Start with SteamVR (Windows), through ThirdParty/OpenVR/openvr_api.dll.
 #   APP_KEY                  riry.rirytools.ftrecorder.recorder.
 #   manifest_path()          %LocalAppData%/RiryTools/FTRecorder/RiryTools.FTRecorder.Recorder.vrmanifest: an overlay
-#                            application (is_dashboard_overlay) launching pythonw.exe (this Python's) with Recorder.pyw.
+#                            application (is_dashboard_overlay) launching the compiled .exe, or, from source, pythonw.exe
+#                            (this Python's) with Recorder.pyw.
 #   is_auto_launch()         GetApplicationAutoLaunch as a Background application: None when SteamVR is not running.
 #   set_auto_launch(on)      On: manifest written, AddApplicationManifest (permanent), SetApplicationAutoLaunch(true).
 #                            Off: SetApplicationAutoLaunch(false), RemoveApplicationManifest, manifest deleted. As a

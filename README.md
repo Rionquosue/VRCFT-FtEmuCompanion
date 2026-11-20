@@ -6,10 +6,19 @@ Companion to RiryTools FTEmulator: a VRCFaceTracking module, a Recorder app and 
 - **Recorder** (`Recorder.pyw`, Python): a window that relays VRCFaceTracking's output to VRChat while it is open, and records it (what FTEmulator in Unity receives) together with the visemes and your microphone on demand. It can start with SteamVR.
 - **Companion app** (`python -m ftrecorder`, Python): processes videos and replays recordings, from the command line.
 
+## Downloads
+
+Every push to `main` builds the Recorder and the companion command line into one program, attached to the [latest](https://github.com/Rionquosue/VRCFT-FtEmuCompanion/releases/tag/latest) pre-release (replaced each time):
+
+- `RiryTools-FTRecorder.exe` (Windows) and `RiryTools-FTRecorder-x86_64.AppImage` (Linux; `chmod +x` it first). Opened with no arguments, they show the Recorder; with arguments, they are the companion command line (`RiryTools-FTRecorder.exe process --video clip.mp4 --out clip.mkv`).
+- They include Python, numpy, onnxruntime and the face models, so nothing else is installed for them except ffmpeg (below). They are not code-signed, so Windows SmartScreen may ask before the first start.
+
+The Module is built separately (below); `.github/workflows/build.yml` and `packaging/build.py` make the downloads.
+
 ## Requirements
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download) to build the module, and [VRCFaceTracking](https://github.com/benaclejames/VRCFaceTracking) to use it.
-- [Python](https://www.python.org/downloads/) 3.10 or newer, with tkinter (included in python.org's Windows installer; on Linux, your distribution's `python3-tk`), for the Recorder and the companion app. `process` also needs `pip install -r requirements.txt` (numpy, onnxruntime).
+- To run the Recorder and the companion app from source instead of the downloads: [Python](https://www.python.org/downloads/) 3.10 or newer, with tkinter (included in python.org's Windows installer; on Linux, your distribution's `python3-tk`), for the Recorder and the companion app. `process` also needs `pip install -r requirements.txt` (numpy, onnxruntime).
 - [ffmpeg](https://ffmpeg.org/) on `PATH` (or its path set) for recording, processing, `.mkv` recordings, video files and webcams. Every command and module source that needs it checks first and says how to install it when it is missing.
 - On Windows, VRChat installed through Steam for OVRLipSync (VRChat's viseme engine), or the path to an `OVRLipSync.dll`. OVRLipSync is a Windows DLL: on Linux, visemes come only from a running VRChat (and `process --visemes classifier`).
 - To take visemes from a running VRChat when processing videos: a virtual audio cable (such as VB-Cable), with VRChat's microphone set to the cable's output.
@@ -25,7 +34,7 @@ dotnet publish FTRecorder.Module -c Release -r win-x64 -p:VrcftDir="C:\path\to\f
 
 The zip is written to `FTRecorder.Module/bin/RiryTools.FTRecorder.Module-win-x64.zip`. Install it in VRCFaceTracking's Module Registry as a local .zip module.
 
-The Recorder and the companion app are Python and need no build: run them from this folder (below).
+The Recorder and the companion app are Python: use the downloads, or run them from this folder (below). To build the downloads yourself: `pip install pyinstaller numpy onnxruntime`, then `python packaging/build.py` (Windows), or `python packaging/build.py --appimagetool PATH` with [appimagetool](https://github.com/AppImage/appimagetool) (Linux).
 
 ## Module
 

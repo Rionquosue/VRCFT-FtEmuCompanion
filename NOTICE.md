@@ -44,6 +44,17 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
+## Compiled builds (`RiryTools-FTRecorder.exe`, `RiryTools-FTRecorder-x86_64.AppImage`)
+
+Made with PyInstaller (GPL 2.0 with an exception that allows distributing the programs it makes under any licence). They contain:
+
+- Python (Python Software Foundation License): https://docs.python.org/3/license.html
+- Tcl/Tk (BSD-style Tcl/Tk license), for tkinter: https://www.tcl-lang.org/software/tcltk/license.html
+- numpy (BSD 3-Clause), with the OpenBLAS it ships (BSD 3-Clause): https://github.com/numpy/numpy/blob/main/LICENSE.txt
+- onnxruntime (MIT): https://github.com/microsoft/onnxruntime/blob/main/LICENSE
+- The MediaPipe models and OpenVR above.
+- The Linux AppImage also carries the shared libraries PyInstaller collects from the build system (such as libX11, libXft, fontconfig, freetype, libpng, libffi, expat, brotli, OpenSSL, zlib, bzip2, xz, and the GCC runtime libraries under the GCC Runtime Library Exception), each under its own licence. GNU readline (GPL) is left out.
+
 ## Not included
 
 The Babble face model, OVRLipSync and ffmpeg are not part of this project. They are loaded from paths you set (OVRLipSync, by default, from your VRChat install), under their own licences. Python, numpy (BSD 3-Clause) and onnxruntime (MIT) for the Python apps are installed by you (`requirements.txt`).

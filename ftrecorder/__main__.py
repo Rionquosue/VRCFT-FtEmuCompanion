@@ -32,7 +32,8 @@ Every command that uses ffmpeg checks for it first and says how to install it wh
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(prog="python -m ftrecorder", description=DESCRIPTION, formatter_class=argparse.RawDescriptionHelpFormatter)
+    program = os.path.basename(sys.executable) if getattr(sys, "frozen", False) else "python -m ftrecorder"
+    parser = argparse.ArgumentParser(prog=program, description=DESCRIPTION, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--version", action="version", version="RiryTools FTRecorder " + VERSION)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("recorder", help="open the Recorder window")

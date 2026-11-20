@@ -1,0 +1,110 @@
+# Builds the compiled Recorder and companion command line on every push to main (and from the Actions tab), and
+# replaces the files of the rolling "latest" pre-release: RiryTools-FTRecorder.exe (Windows) and
+# RiryTools-FTRecorder-x86_64.AppImage (Linux). packaging/build.py does the building.
+name: Build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-latest
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  PYINSTALLER_VERSION: "6.22.3"
+  NUMPY_VERSION: "2.5.4"
+  ONNXRUNTIME_VERSION: "1.31.1"
+  APPIMAGETOOL_VERSION: "1.9.1"
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-python@v5.6.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install the build tools
+        run: python -m pip install "pyinstaller==${{ env.PYINSTALLER_VERSION }}" "numpy==${{ env.NUMPY_VERSION }}" "onnxruntime==${{ env.ONNXRUNTIME_VERSION }}"
+      - name: Check tkinter
+        run: python -c "import tkinter; print(tkinter.TkVersion)"
+      - name: Build the .exe
+        run: python packaging/build.py
+      - name: Smoke test
+        run: dist\RiryTools-FTRecorder.exe --version
+      - uses: actions/upload-artifact@v4.6.2
+        with:
+          name: windows
+          path: dist/RiryTools-FTRecorder.exe
+          if-no-files-found: error
+
+  linux:
+    # The oldest supported runner, so the AppImage runs on older distributions (glibc 2.35).
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-python@v5.6.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install Tk and the build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libtk8.6
+          python -m pip install "pyinstaller==${{ env.PYINSTALLER_VERSION }}" "numpy==${{ env.NUMPY_VERSION }}" "onnxruntime==${{ env.ONNXRUNTIME_VERSION }}"
+      - name: Check tkinter
+        run: python -c "import tkinter; print(tkinter.TkVersion)"
+      - name: Get appimagetool
+        run: |
+          mkdir -p "$RUNNER_TEMP/appimagetool"
+          curl -fsSL -o "$RUNNER_TEMP/appimagetool/appimagetool" "https://github.com/AppImage/appimagetool/releases/download/${{ env.APPIMAGETOOL_VERSION }}/appimagetool-x86_64.AppImage"
+          chmod +x "$RUNNER_TEMP/appimagetool/appimagetool"
+      - name: Build the .AppImage
+        run: python packaging/build.py --appimagetool "$RUNNER_TEMP/appimagetool/appimagetool"
+      - name: Smoke test
+        run: APPIMAGE_EXTRACT_AND_RUN=1 dist/RiryTools-FTRecorder-x86_64.AppImage --version
+      - uses: actions/upload-artifact@v4.6.2
+        with:
+          name: linux
+          path: dist/RiryTools-FTRecorder-x86_64.AppImage
+          if-no-files-found: error
+
+  release:
+    needs: [windows, linux]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4.3.0
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Replace the rolling release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
+          gh release create latest --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
+            --title "Latest build" \
+            --notes "Built from ${GITHUB_SHA} on main. RiryTools-FTRecorder.exe (Windows) and RiryTools-FTRecorder-x86_64.AppImage (Linux): with no arguments they open the Recorder; with arguments they are the companion command line (process, replay). ffmpeg is not included: install it and add it to PATH, or set its path in the Recorder. See the README." \
+            dist/RiryTools-FTRecorder.exe dist/RiryTools-FTRecorder-x86_64.AppImage
+
+# ============================================================================
+# GLOSSARY: Build workflow
+# ============================================================================
+#
+# build.yml (this file)    Compiled builds and the rolling release.
+#   on                       Every push to main; workflow_dispatch (the Actions tab's Run workflow).
+#   windows                  windows-latest, Python 3.12, PyInstaller 6.22.3, numpy 2.5.4, onnxruntime 1.31.1;
+#                            packaging/build.py -> dist/RiryTools-FTRecorder.exe; --version as a smoke test.
+#   linux                    ubuntu-22.04 (glibc 2.35), the same tools plus appimagetool 1.9.1 ->
+#                            dist/RiryTools-FTRecorder-x86_64.AppImage; --version (extract-and-run) as a smoke test.
+#   release                  main only, after both: deletes the "latest" release and its tag, then creates it again at
+#                            this commit as a pre-release with both files. contents: write for this job only.
+#   concurrency              build-latest: a newer push cancels an older run, so releases do not race.
