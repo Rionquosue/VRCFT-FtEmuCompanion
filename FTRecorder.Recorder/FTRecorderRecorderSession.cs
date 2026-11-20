@@ -75,8 +75,9 @@ namespace Riry.RiryTools.FTRecorder
 
         private void Open(Func<string, string> ask)
         {
-            Directory.CreateDirectory(settings.Folder);
+            // ffmpeg first, so nothing is created when it is missing.
             FTRecorderFfmpeg.Check(settings.Ffmpeg);
+            Directory.CreateDirectory(settings.Folder);
             // The microphone is recorded either way; without VRChat it also feeds OVRLipSync. Both are found first.
             if (!vrchat)
             {

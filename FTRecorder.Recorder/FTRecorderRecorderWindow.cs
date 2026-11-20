@@ -240,6 +240,18 @@ namespace Riry.RiryTools.FTRecorder
 
         private async Task Start()
         {
+            // ffmpeg writes the .mkv: without it, a popup and nothing else (no recording, no folder, no file).
+            string ffmpegPath = FfmpegPath;
+            try
+            {
+                await Task.Run(() => FTRecorderFfmpeg.Check(ffmpegPath));
+            }
+            catch (FileNotFoundException)
+            {
+                await FTRecorderRecorderPopup.Show(this, "FFmpeg not found",
+                    "ffmpeg was not found (looked for \"" + (ffmpegPath ?? "ffmpeg") + "\"). Install ffmpeg from https://ffmpeg.org/download.html and add it to PATH, or set its full path in the ffmpeg field.");
+                return;
+            }
             // No microphone chosen yet (or ffmpeg's path was just fixed): asked again first.
             if (microphone.SelectedItem == null) await ListMicrophones();
             var settings = new FTRecorderRecorderSettings
@@ -371,7 +383,9 @@ namespace Riry.RiryTools.FTRecorder
 //                            when not recording.
 //   Start with SteamVR       FTRecorderSteamVr.SetAutoLaunch when toggled (reverted, with the error, when it fails). Shown
 //                            from SteamVR (IsAutoLaunch) while it runs, else from whether the manifest exists. Windows only.
-//   Start recording          FTRecorderRecorderSession.Start off the window's thread; the counts every second after.
+//   Start recording          ffmpeg checked first: missing -> the "FFmpeg not found" popup (FTRecorderRecorderPopup) and
+//                            nothing else. Then FTRecorderRecorderSession.Start off the window's thread; the counts every
+//                            second after.
 //   Stop and save            FTRecorderRecorderSession.Stop off the window's thread (writes the .mkv).
 //   AskOvrLipSync(reason)    The error in the log, then a file picker; cancel stops the start.
 //   Closing                  While recording: stops and saves, then closes; stays open when saving fails.
