@@ -115,7 +115,7 @@ namespace Riry.RiryTools.FTRecorder
 // FTRecorderMatroska (this file)  One-file recordings (.mkv) through the user's ffmpeg.
 //   WriteWithRawAudio(ffmpeg, recording, audio, sampleRate, audioStart, captions, output)  Opus 48 kb/s audio from raw
 //                            s16le (offset by audioStart), an SRT subtitle track titled "Visemes", and the recording
-//                            attached as recording.ftrec.jsonl (application/x-ndjson). For record. With no video, audio
+//                            attached as recording.ftrec.jsonl (application/x-ndjson). For the Recorder. With no video, audio
 //                            or captions, 20 ms of silence is the track (a Matroska file needs one).
 //   WriteWithVideo(ffmpeg, recording, video, captions, output)  The same with a video file's first video track copied
 //                            unchanged and its first audio track as Opus 96 kb/s (no audio track when it has none,

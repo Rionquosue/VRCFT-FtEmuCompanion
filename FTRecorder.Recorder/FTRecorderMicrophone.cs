@@ -87,7 +87,7 @@ namespace Riry.RiryTools.FTRecorder
 // GLOSSARY: FTRecorder microphone
 // ============================================================================
 //
-// FTRecorderMicrophone (this file)  Microphone (16 kHz mono s16 via ffmpeg) during record.
+// FTRecorderMicrophone (this file)  Microphone (16 kHz mono s16 via ffmpeg) while the Recorder app records.
 //   (microphone, audioPath, lipSync, writer)  Raw samples appended to audioPath (flushed every second); with lipSync,
 //                            each 10 ms block through OVRLipSync into a Viseme entry (strongest, Voice -55 to -25 dBFS
 //                            as 0 to 1, 15 weights).

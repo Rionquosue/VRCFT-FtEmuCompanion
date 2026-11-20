@@ -165,10 +165,11 @@ namespace Riry.RiryTools.FTRecorder
             return new FTRecorderFfmpeg(ffmpeg, arguments);
         }
 
-        /// <summary>The first audio capture device ffmpeg lists for dshow, or null.</summary>
-        internal static string FirstMicrophone(string ffmpeg)
+        /// <summary>The audio capture devices ffmpeg lists for dshow, in its order (empty when none).</summary>
+        internal static List<string> ListMicrophones(string ffmpeg)
         {
             var arguments = new List<string> { "-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy" };
+            var names = new List<string>();
             using var lister = new FTRecorderFfmpeg(ffmpeg, arguments);
             lister.process.WaitForExit(10000);
             lister.errorReader.Join(2000);
@@ -177,9 +178,9 @@ namespace Riry.RiryTools.FTRecorder
                 // Lines look like: [dshow @ 000001] "Microphone (Realtek Audio)" (audio)
                 if (!line.Contains("(audio)", StringComparison.Ordinal)) continue;
                 int first = line.IndexOf('"'), last = line.LastIndexOf('"');
-                if (first >= 0 && last > first) return line.Substring(first + 1, last - first - 1);
+                if (first >= 0 && last > first) names.Add(line.Substring(first + 1, last - first - 1));
             }
-            return null;
+            return names;
         }
 
         /// <summary>Fills buffer completely. False at the end of the input or when ffmpeg stops.</summary>
@@ -263,7 +264,7 @@ namespace Riry.RiryTools.FTRecorder
 //   ReadFrame(frame)         The next frame; false at the end.
 //   ReadAudio(ffmpeg, input, cancel, sampleRate)  Mono s16 samples (16 kHz by default); empty when there is no audio.
 //   OpenMicrophone(ffmpeg, format, device)  Live 16 kHz mono s16 from a capture device (dshow: "audio=<name>").
-//   FirstMicrophone(ffmpeg)  The first "(audio)" device ffmpeg's dshow listing names, or null.
+//   ListMicrophones(ffmpeg)  The "(audio)" devices ffmpeg's dshow listing names, in order.
 //   ReadExactly(buffer)      Fills buffer from ffmpeg's output; false at the end.
 //   Errors                   ffmpeg's error output so far (8 KB at most).
 //   NotFound(ffmpeg)         The not-found message: what was looked for; install from ffmpeg.org, add to PATH or give
