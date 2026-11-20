@@ -22,8 +22,6 @@
     </Reference>
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.1" ExcludeAssets="runtime" />
     <None Include="module.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    <!-- Shared code the module does not use (video processing, visemes, VRChat lookup, discovery) stays out of it. -->
-    <Compile Remove="$(MSBuildThisFileDirectory)..\FTRecorder.Core\FTRecorderVideoProcessor.cs;$(MSBuildThisFileDirectory)..\FTRecorder.Core\FTRecorderViseme*.cs;$(MSBuildThisFileDirectory)..\FTRecorder.Core\FTRecorderOvrLipSync.cs;$(MSBuildThisFileDirectory)..\FTRecorder.Core\FTRecorderDnsPacket.cs;$(MSBuildThisFileDirectory)..\FTRecorder.Core\FTRecorderVrchatInstall.cs" />
   </ItemGroup>
   <Target Name="FTRecorderZip" AfterTargets="Publish">
     <!-- Import libraries and symbols are not needed to run. -->

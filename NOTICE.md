@@ -6,17 +6,11 @@ Converted to ONNX, unchanged otherwise, from MediaPipe's `face_landmarker.task` 
 
 Copyright Google LLC. Licensed under the Apache License, Version 2.0: https://www.apache.org/licenses/LICENSE-2.0
 
-## ONNX Runtime
+## ONNX Runtime (the module)
 
 Microsoft.ML.OnnxRuntime, Copyright Microsoft Corporation. MIT License: https://github.com/microsoft/onnxruntime/blob/main/LICENSE
 
-## Avalonia (the Recorder app's window)
-
-Avalonia, Copyright .NET Foundation and Contributors. MIT License: https://github.com/AvaloniaUI/Avalonia/blob/master/licence.md
-
-It brings SkiaSharp (MIT; Skia, BSD 3-Clause), HarfBuzzSharp (MIT; HarfBuzz, Old MIT), Tmds.DBus (MIT) and MicroCom.Runtime (MIT), each under its own licence.
-
-## OpenVR (`openvr_api.dll`, the Recorder's Start with SteamVR)
+## OpenVR (`ThirdParty/OpenVR/openvr_api.dll`, the Recorder's Start with SteamVR)
 
 `openvr_api.dll` from Valve's OpenVR SDK 2.15.6 (`bin/win64`, SHA-256 `bab8ac6ef64e68a9ca53315b0014d131088584b2efdfa6db511d67ec03cfcb4a`), unchanged. Source: https://github.com/ValveSoftware/openvr
 
@@ -52,4 +46,4 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## Not included
 
-The Babble face model, OVRLipSync and ffmpeg are not part of this project. They are loaded from paths you set (OVRLipSync, by default, from your VRChat install), under their own licences.
+The Babble face model, OVRLipSync and ffmpeg are not part of this project. They are loaded from paths you set (OVRLipSync, by default, from your VRChat install), under their own licences. Python, numpy (BSD 3-Clause) and onnxruntime (MIT) for the Python apps are installed by you (`requirements.txt`).

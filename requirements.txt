@@ -1,0 +1,4 @@
+# The Recorder (Recorder.pyw, python -m ftrecorder recorder) and replay need only Python 3.10+ with tkinter.
+# process (the face models and FTRecorder's viseme classifier) also needs:
+numpy>=1.24
+onnxruntime>=1.17

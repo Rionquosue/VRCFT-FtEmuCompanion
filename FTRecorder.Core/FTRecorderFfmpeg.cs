@@ -8,9 +8,9 @@ using System.Threading;
 namespace Riry.RiryTools.FTRecorder
 {
     /// <summary>
-    /// Video frames and audio through the user's own ffmpeg (not bundled). ffmpeg is started with an argument list,
+    /// Video frames through the user's own ffmpeg (not bundled). ffmpeg is started with an argument list,
     /// never through a shell, and writes raw data to its standard output: frames as RGB, fitted into a square with black
-    /// borders so their size is known in advance, and audio as 16 kHz mono 16-bit samples.
+    /// borders so their size is known in advance.
     /// </summary>
     internal sealed class FTRecorderFfmpeg : IDisposable
     {
@@ -136,74 +136,6 @@ namespace Riry.RiryTools.FTRecorder
             return new FTRecorderFfmpeg(ffmpeg, arguments);
         }
 
-        /// <summary>The audio of a file as mono 16-bit samples at sampleRate (16 kHz by default); empty when it has none.</summary>
-        internal static short[] ReadAudio(string ffmpeg, string input, CancellationToken cancel, int sampleRate = 16000)
-        {
-            var arguments = new List<string> { "-hide_banner", "-loglevel", "error", "-nostdin", "-i", input, "-vn", "-ac", "1", "-ar", sampleRate.ToString(System.Globalization.CultureInfo.InvariantCulture), "-f", "s16le", "-" };
-            using var reader = new FTRecorderFfmpeg(ffmpeg, arguments);
-            using var memory = new MemoryStream();
-            var buffer = new byte[65536];
-            int read;
-            while ((read = reader.output.Read(buffer, 0, buffer.Length)) > 0)
-            {
-                cancel.ThrowIfCancellationRequested();
-                memory.Write(buffer, 0, read);
-            }
-            var samples = new short[memory.Length / 2];
-            Buffer.BlockCopy(memory.GetBuffer(), 0, samples, 0, samples.Length * 2);
-            return samples;
-        }
-
-        /// <summary>
-        /// Live audio from a capture device (a microphone) as 16 kHz mono 16-bit samples: format is ffmpeg's input format
-        /// (dshow on Windows) and device its name ("audio=" is added for dshow).
-        /// </summary>
-        internal static FTRecorderFfmpeg OpenMicrophone(string ffmpeg, string format, string device)
-        {
-            string input = format == "dshow" && !device.StartsWith("audio=", StringComparison.Ordinal) ? "audio=" + device : device;
-            var arguments = new List<string> { "-hide_banner", "-loglevel", "error", "-f", format, "-i", input, "-ac", "1", "-ar", "16000", "-f", "s16le", "-" };
-            return new FTRecorderFfmpeg(ffmpeg, arguments);
-        }
-
-        /// <summary>The audio capture devices ffmpeg lists for dshow, in its order (empty when none).</summary>
-        internal static List<string> ListMicrophones(string ffmpeg)
-        {
-            var arguments = new List<string> { "-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy" };
-            var names = new List<string>();
-            using var lister = new FTRecorderFfmpeg(ffmpeg, arguments);
-            lister.process.WaitForExit(10000);
-            lister.errorReader.Join(2000);
-            foreach (string line in lister.Errors.Split('\n'))
-            {
-                // Lines look like: [dshow @ 000001] "Microphone (Realtek Audio)" (audio)
-                if (!line.Contains("(audio)", StringComparison.Ordinal)) continue;
-                int first = line.IndexOf('"'), last = line.LastIndexOf('"');
-                if (first >= 0 && last > first) names.Add(line.Substring(first + 1, last - first - 1));
-            }
-            return names;
-        }
-
-        /// <summary>Fills buffer completely. False at the end of the input or when ffmpeg stops.</summary>
-        internal bool ReadExactly(byte[] buffer)
-        {
-            int filled = 0;
-            while (filled < buffer.Length)
-            {
-                int read;
-                try
-                {
-                    read = output.Read(buffer, filled, buffer.Length - filled);
-                }
-                catch (Exception exception) when (exception is IOException || exception is ObjectDisposedException)
-                {
-                    return false;
-                }
-                if (read <= 0) return false;
-                filled += read;
-            }
-            return true;
-        }
-
         /// <summary>Reads the next frame into frame (size × size). False at the end of the input or when ffmpeg stops.</summary>
         internal bool ReadFrame(FTRecorderFrame frame)
         {
@@ -262,10 +194,6 @@ namespace Riry.RiryTools.FTRecorder
 //   OpenVideo(ffmpeg, inputOptions, input, size, fps, realTime)  RGB frames size × size (fitted, black borders), at
 //                            fps when above 0. inputOptions go before -i (a webcam's "-f dshow"). realTime adds -re.
 //   ReadFrame(frame)         The next frame; false at the end.
-//   ReadAudio(ffmpeg, input, cancel, sampleRate)  Mono s16 samples (16 kHz by default); empty when there is no audio.
-//   OpenMicrophone(ffmpeg, format, device)  Live 16 kHz mono s16 from a capture device (dshow: "audio=<name>").
-//   ListMicrophones(ffmpeg)  The "(audio)" devices ffmpeg's dshow listing names, in order.
-//   ReadExactly(buffer)      Fills buffer from ffmpeg's output; false at the end.
 //   Errors                   ffmpeg's error output so far (8 KB at most).
 //   NotFound(ffmpeg)         The not-found message: what was looked for; install from ffmpeg.org, add to PATH or give
 //                            the path (--ffmpeg, ffmpegPath). Every failed start throws FileNotFoundException with it.
