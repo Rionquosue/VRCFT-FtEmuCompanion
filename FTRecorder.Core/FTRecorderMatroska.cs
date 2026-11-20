@@ -29,34 +29,41 @@ namespace Riry.RiryTools.FTRecorder
         /// </summary>
         internal static void WriteWithRawAudio(string ffmpeg, string recording, string audio, int sampleRate, double audioStart, string captions, string output)
         {
-            var audioInput = new List<string>();
-            if (!string.IsNullOrEmpty(audio) && File.Exists(audio) && new FileInfo(audio).Length > 0)
-                audioInput.AddRange(new[] { "-f", "s16le", "-ar", sampleRate.ToString(CultureInfo.InvariantCulture), "-ac", "1",
-                                            "-itsoffset", Math.Max(0, audioStart).ToString("0.###", CultureInfo.InvariantCulture), "-i", audio });
-            Write(ffmpeg, recording, audioInput, "48k", captions, output);
+            bool hasAudio = !string.IsNullOrEmpty(audio) && File.Exists(audio) && new FileInfo(audio).Length > 0;
+            var media = hasAudio
+                ? new List<string> { "-f", "s16le", "-ar", sampleRate.ToString(CultureInfo.InvariantCulture), "-ac", "1",
+                                     "-itsoffset", Math.Max(0, audioStart).ToString("0.###", CultureInfo.InvariantCulture), "-i", audio }
+                : new List<string>();
+            Write(ffmpeg, recording, media, false, hasAudio, "48k", captions, output);
         }
 
-        /// <summary>Like WriteWithRawAudio, with the first audio track of a media file (a video), from its start; none if it has none.</summary>
-        internal static void WriteWithAudioOf(string ffmpeg, string recording, string media, string captions, string output)
+        /// <summary>
+        /// Like WriteWithRawAudio, with a video file's first video track copied unchanged and its first audio track (none
+        /// when it has none) as Opus, both from the video's start.
+        /// </summary>
+        internal static void WriteWithVideo(string ffmpeg, string recording, string video, string captions, string output)
         {
-            // Asked first: with no audio to map, ffmpeg would pick the video stream by itself.
-            (int code, string _) = FTRecorderFfmpeg.Run(ffmpeg, new List<string> { "-hide_banner", "-loglevel", "error", "-nostdin", "-i", media, "-map", "0:a:0", "-t", "0", "-f", "null", "-" }, 60000);
-            Write(ffmpeg, recording, code == 0 ? new List<string> { "-i", media } : new List<string>(), "96k", captions, output);
+            // Asked first: mapping a missing audio track fails the whole write.
+            (int code, string _) = FTRecorderFfmpeg.Run(ffmpeg, new List<string> { "-hide_banner", "-loglevel", "error", "-nostdin", "-i", video, "-map", "0:a:0", "-t", "0", "-f", "null", "-" }, 60000);
+            Write(ffmpeg, recording, new List<string> { "-i", video }, true, code == 0, "96k", captions, output);
         }
 
-        private static void Write(string ffmpeg, string recording, List<string> audioInput, string bitrate, string captions, string output)
+        private static void Write(string ffmpeg, string recording, List<string> media, bool hasVideo, bool hasAudio, string bitrate, string captions, string output)
         {
             var arguments = new List<string> { "-hide_banner", "-loglevel", "error", "-nostdin", "-y" };
             int input = 0;
-            int audioIndex = -1, captionIndex = -1;
+            int mediaIndex = -1, captionIndex = -1;
             string captionFile = null;
-            // A Matroska file needs a track: with no sound and no visemes, 20 ms of silence carries the attachment.
-            if (audioInput.Count == 0 && string.IsNullOrEmpty(captions))
-                audioInput = new List<string> { "-f", "lavfi", "-t", "0.02", "-i", "anullsrc=r=16000:cl=mono" };
-            if (audioInput.Count > 0)
+            // A Matroska file needs a track: with no picture, sound or visemes, 20 ms of silence carries the attachment.
+            if (!hasVideo && !hasAudio && string.IsNullOrEmpty(captions))
             {
-                arguments.AddRange(audioInput);
-                audioIndex = input++;
+                media = new List<string> { "-f", "lavfi", "-t", "0.02", "-i", "anullsrc=r=16000:cl=mono" };
+                hasAudio = true;
+            }
+            if (hasVideo || hasAudio)
+            {
+                arguments.AddRange(media);
+                mediaIndex = input++;
             }
             if (!string.IsNullOrEmpty(captions))
             {
@@ -67,7 +74,9 @@ namespace Riry.RiryTools.FTRecorder
             }
             try
             {
-                if (audioIndex >= 0) arguments.AddRange(new[] { "-map", audioIndex + ":a:0", "-c:a", "libopus", "-b:a", bitrate });
+                // The picture is copied as it is; Matroska holds every common video codec.
+                if (hasVideo) arguments.AddRange(new[] { "-map", mediaIndex + ":v:0", "-c:v", "copy" });
+                if (hasAudio) arguments.AddRange(new[] { "-map", mediaIndex + ":a:0", "-c:a", "libopus", "-b:a", bitrate });
                 if (captionIndex >= 0) arguments.AddRange(new[] { "-map", captionIndex + ":s", "-c:s", "srt", "-metadata:s:s:0", "title=Visemes" });
                 arguments.AddRange(new[] { "-attach", recording, "-metadata:s:t:0", "mimetype=" + AttachmentType, "-metadata:s:t:0", "filename=" + AttachmentName });
                 arguments.AddRange(new[] { "-f", "matroska", output });
@@ -106,9 +115,10 @@ namespace Riry.RiryTools.FTRecorder
 // FTRecorderMatroska (this file)  One-file recordings (.mkv) through the user's ffmpeg.
 //   WriteWithRawAudio(ffmpeg, recording, audio, sampleRate, audioStart, captions, output)  Opus 48 kb/s audio from raw
 //                            s16le (offset by audioStart), an SRT subtitle track titled "Visemes", and the recording
-//                            attached as recording.ftrec.jsonl (application/x-ndjson). For record. With neither audio
-//                            nor captions, 20 ms of silence is the track (a Matroska file needs one).
-//   WriteWithAudioOf(ffmpeg, recording, media, captions, output)  The same with a media file's first audio track as
-//                            Opus 96 kb/s; no audio track when it has none (checked first). For process.
+//                            attached as recording.ftrec.jsonl (application/x-ndjson). For record. With no video, audio
+//                            or captions, 20 ms of silence is the track (a Matroska file needs one).
+//   WriteWithVideo(ffmpeg, recording, video, captions, output)  The same with a video file's first video track copied
+//                            unchanged and its first audio track as Opus 96 kb/s (no audio track when it has none,
+//                            checked first). For process.
 //   ExtractRecording(ffmpeg, mkv)  The attached recording copied to a new temporary folder; its path.
 //   IsMatroska(path)         The file starts with the EBML magic 1A 45 DF A3.

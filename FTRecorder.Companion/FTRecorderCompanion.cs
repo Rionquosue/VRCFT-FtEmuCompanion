@@ -29,7 +29,7 @@ namespace Riry.RiryTools.FTRecorder
           [--babble-crop SCALE] [--visemes ovrlipsync|classifier] [--ovrlipsync PATH] [--cable NAME] [--fps N]
           [--size N] [--threads N]
       Runs a recorded video through the face models (MediaPipe; Babble too when --babble-model is given) into
-      one Matroska file: the video's sound as audio, the visemes as a subtitle track, and the whole recording
+      one Matroska file: the video itself, its sound as audio, the visemes as a subtitle track, and the whole recording
       (face data and visemes) attached. Until it is written the data is kept in FILE.mkv.recording.ftrec.jsonl.
       Visemes: while VRChat is running, the video's sound is played into VRChat through a virtual audio cable
       (--cable, default ""CABLE Input""; set VRChat's microphone to the cable's output) and the Viseme and Voice
@@ -247,7 +247,7 @@ namespace Riry.RiryTools.FTRecorder
             string captions = FTRecorderCaptions.Build(FTRecorderRecording.Load(data));
             try
             {
-                FTRecorderMatroska.WriteWithAudioOf(settings.Ffmpeg, data, settings.Video, captions, output);
+                FTRecorderMatroska.WriteWithVideo(settings.Ffmpeg, data, settings.Video, captions, output);
             }
             catch (Exception exception) when (exception is InvalidOperationException || exception is IOException)
             {
@@ -300,7 +300,7 @@ namespace Riry.RiryTools.FTRecorder
 //                            FILE.recording.ftrec.jsonl and FILE.microphone.s16le, then FTRecorderMatroska.Write with
 //                            FTRecorderCaptions; the working files are deleted once the .mkv is written, kept if not.
 //   process --video FILE --out FILE.mkv [...]  FTRecorderVideoProcessor into FILE.mkv.recording.ftrec.jsonl, then
-//                            FTRecorderMatroska.WriteWithAudioOf (the video's audio) with FTRecorderCaptions; the working
+//                            FTRecorderMatroska.WriteWithVideo (the video and its audio) with FTRecorderCaptions; the working
 //                            file is deleted once the .mkv is written, kept if not. ffmpeg checked first (Check).
 //                            Processing: (--ffmpeg, --babble-model, --babble-labels,
 //                            --babble-crop 1, --visemes ovrlipsync|classifier (forces an engine), --ovrlipsync (else
