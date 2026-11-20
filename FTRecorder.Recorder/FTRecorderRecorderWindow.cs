@@ -12,8 +12,9 @@ using Avalonia.Threading;
 namespace Riry.RiryTools.FTRecorder
 {
     /// <summary>
-    /// The Recorder window: where the recording goes, the two proxy ports, the microphone, ffmpeg and OVRLipSync, a
-    /// Start/Stop button, the counts while recording, and a log.
+    /// The Recorder window: where the recording goes, the two relay ports, the microphone, ffmpeg and OVRLipSync, Start
+    /// with SteamVR, a Start/Stop button, the counts, and a log. While the window is open it relays VRCFaceTracking's
+    /// output to VRChat; it records only between Start recording and Stop and save.
     /// </summary>
     internal sealed class FTRecorderRecorderWindow : Window
     {
@@ -23,12 +24,15 @@ namespace Riry.RiryTools.FTRecorder
         private readonly ComboBox microphone = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch, PlaceholderText = "Looking for microphones…" };
         private readonly TextBox ffmpeg = new TextBox { Text = "ffmpeg" };
         private readonly TextBox ovrLipSync = new TextBox { PlaceholderText = "VRChat's copy (found through Steam)" };
+        private readonly CheckBox startWithSteamVr = new CheckBox { Content = "Start with SteamVR" };
         private readonly Button startStop = new Button { Content = "Start recording", MinWidth = 140 };
         private readonly TextBlock status = new TextBlock { VerticalAlignment = VerticalAlignment.Center, TextWrapping = Avalonia.Media.TextWrapping.Wrap };
         private readonly TextBox log = new TextBox { IsReadOnly = true, AcceptsReturn = true, TextWrapping = Avalonia.Media.TextWrapping.Wrap };
         private readonly List<Control> fields = new List<Control>();
         private readonly DispatcherTimer timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         private FTRecorderRecorderSession session;
+        private FTRecorderProxy relay;
+        private bool settingSteamVr;
         private bool busy;
         private bool closeWhenSaved;
 
@@ -49,8 +53,10 @@ namespace Riry.RiryTools.FTRecorder
             AddRow(grid, ref row, "Microphone", microphone, null);
             AddRow(grid, ref row, "ffmpeg", ffmpeg, Browse("Browse…", ChooseFfmpeg));
             AddRow(grid, ref row, "OVRLipSync.dll", ovrLipSync, Browse("Browse…", ChooseOvrLipSync));
+            AddRow(grid, ref row, "SteamVR", startWithSteamVr, Hint("SteamVR opens the Recorder when it starts."));
             fields.AddRange(new Control[] { output, inPort, outPort, microphone, ffmpeg, ovrLipSync });
             fields.AddRange(grid.Children.OfType<Button>());
+            fields.Remove(startWithSteamVr);
 
             var controls = new DockPanel { LastChildFill = true };
             DockPanel.SetDock(startStop, Dock.Left);
@@ -70,11 +76,17 @@ namespace Riry.RiryTools.FTRecorder
             Content = grid;
 
             startStop.Click += (_, _) => _ = StartOrStop();
-            timer.Tick += (_, _) => status.Text = session?.Status() ?? "";
+            timer.Tick += (_, _) => status.Text = session?.Status() ?? RelayStatus();
+            inPort.ValueChanged += (_, _) => RestartRelay();
+            outPort.ValueChanged += (_, _) => RestartRelay();
+            startWithSteamVr.IsCheckedChanged += (_, _) => _ = SetStartWithSteamVr();
             Closing += OnClosing;
+            Closed += (_, _) => relay?.Dispose();
             FTRecorderRecorderLog.Attach(text => Dispatcher.UIThread.Post(() => Log(text)));
-            Log("Set VRCFaceTracking's OSC output port to the first port, then press Start recording.");
+            RestartRelay();
+            timer.Start();
             _ = ListMicrophones();
+            _ = LoadStartWithSteamVr();
         }
 
         private static NumericUpDown Port(int value) =>
@@ -120,6 +132,74 @@ namespace Riry.RiryTools.FTRecorder
         {
             log.Text = string.IsNullOrEmpty(log.Text) ? text : log.Text + Environment.NewLine + text;
             log.CaretIndex = log.Text.Length;
+        }
+
+        // The relay runs whenever the window is open: restarted when a port changes (the ports are locked while recording).
+        private void RestartRelay()
+        {
+            if (session != null) return;
+            relay?.Dispose();
+            relay = null;
+            int inValue = (int)(inPort.Value ?? 9010), outValue = (int)(outPort.Value ?? 9000);
+            try
+            {
+                relay = new FTRecorderProxy(inValue, outValue);
+                Log("Relaying VRCFaceTracking's output from port " + inValue + " to " + outValue + " (set VRCFaceTracking's OSC output port to " + inValue + ").");
+            }
+            catch (Exception exception) when (exception is ArgumentException || exception is InvalidOperationException)
+            {
+                Log("Error: not relaying: " + exception.Message);
+            }
+        }
+
+        private string RelayStatus()
+        {
+            FTRecorderProxy current = relay;
+            return current == null ? "Not relaying" : "Relaying " + current.InPort + " → " + current.OutPort + ": " + System.Threading.Interlocked.Read(ref current.Packets) + " packets";
+        }
+
+        // SteamVR's own setting while it runs; otherwise whether the Recorder's manifest is there (it is removed when
+        // unchecked), so SteamVR is not started just to look.
+        private async Task LoadStartWithSteamVr()
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                startWithSteamVr.IsEnabled = false;
+                return;
+            }
+            bool on;
+            try
+            {
+                on = await Task.Run(() => FTRecorderSteamVr.IsAutoLaunch() ?? File.Exists(FTRecorderSteamVr.ManifestPath));
+            }
+            catch (Exception exception) when (IsExpected(exception))
+            {
+                Log("Error: SteamVR: " + exception.Message);
+                on = File.Exists(FTRecorderSteamVr.ManifestPath);
+            }
+            settingSteamVr = true;
+            startWithSteamVr.IsChecked = on;
+            settingSteamVr = false;
+        }
+
+        private async Task SetStartWithSteamVr()
+        {
+            if (settingSteamVr) return;
+            bool on = startWithSteamVr.IsChecked == true;
+            startWithSteamVr.IsEnabled = false;
+            try
+            {
+                await Task.Run(() => FTRecorderSteamVr.SetAutoLaunch(on));
+                Log(on ? "SteamVR will start the Recorder (registered " + FTRecorderSteamVr.ManifestPath + ")." : "SteamVR will no longer start the Recorder.");
+            }
+            catch (Exception exception) when (IsExpected(exception))
+            {
+                Log("Error: SteamVR: " + exception.Message);
+                settingSteamVr = true;
+                startWithSteamVr.IsChecked = !on;
+                settingSteamVr = false;
+            }
+            startWithSteamVr.IsEnabled = true;
         }
 
         // The microphones ffmpeg lists (dshow, so Windows only); the first is chosen, as the command line did.
@@ -172,8 +252,6 @@ namespace Riry.RiryTools.FTRecorder
             var settings = new FTRecorderRecorderSettings
             {
                 Output = output.Text?.Trim(),
-                InPort = (int)(inPort.Value ?? 9010),
-                OutPort = (int)(outPort.Value ?? 9000),
                 Microphone = microphone.SelectedItem as string,
                 Ffmpeg = FfmpegPath,
                 OvrLipSync = ovrLipSync.Text?.Trim(),
@@ -181,9 +259,8 @@ namespace Riry.RiryTools.FTRecorder
             SetFieldsEnabled(false);
             try
             {
-                session = await Task.Run(() => FTRecorderRecorderSession.Start(settings, AskOvrLipSync, text => Dispatcher.UIThread.Post(() => Log(text))));
+                session = await Task.Run(() => FTRecorderRecorderSession.Start(settings, relay, AskOvrLipSync, text => Dispatcher.UIThread.Post(() => Log(text))));
                 startStop.Content = "Stop and save";
-                timer.Start();
             }
             catch (Exception exception) when (IsExpected(exception))
             {
@@ -194,7 +271,6 @@ namespace Riry.RiryTools.FTRecorder
 
         private async Task Stop()
         {
-            timer.Stop();
             FTRecorderRecorderSession stopping = session;
             status.Text = "Saving…";
             try
@@ -209,7 +285,7 @@ namespace Riry.RiryTools.FTRecorder
                 closeWhenSaved = false;
             }
             session = null;
-            status.Text = "";
+            status.Text = RelayStatus();
             startStop.Content = "Start recording";
             SetFieldsEnabled(true);
         }
@@ -303,6 +379,11 @@ namespace Riry.RiryTools.FTRecorder
 //                            VRCFaceTracking OSC output port (9010), Pass on to port (9000), Microphone (ffmpeg's dshow
 //                            list, first chosen), ffmpeg ("ffmpeg"), OVRLipSync.dll (empty: VRChat's copy). Browse
 //                            buttons open file pickers. Fields are locked while recording.
+//   Relay                    FTRecorderProxy from the first port to the second whenever the window is open (restarted
+//                            when a port changes; disposed when the window closes). The status line shows its packets
+//                            when not recording.
+//   Start with SteamVR       FTRecorderSteamVr.SetAutoLaunch when toggled (reverted, with the error, when it fails). Shown
+//                            from SteamVR (IsAutoLaunch) while it runs, else from whether the manifest exists. Windows only.
 //   Start recording          FTRecorderRecorderSession.Start off the window's thread; the counts every second after.
 //   Stop and save            FTRecorderRecorderSession.Stop off the window's thread (writes the .mkv).
 //   AskOvrLipSync(reason)    The error in the log, then a file picker; cancel stops the start.

@@ -13,6 +13,8 @@
     <Compile Remove="$(MSBuildThisFileDirectory)..\FTRecorder.Core\FTRecorderFace*.cs;$(MSBuildThisFileDirectory)..\FTRecorder.Core\FTRecorderBabbleModel.cs;$(MSBuildThisFileDirectory)..\FTRecorder.Core\FTRecorderModelFiles.cs;$(MSBuildThisFileDirectory)..\FTRecorder.Core\FTRecorderVideoProcessor.cs" />
     <PackageReference Remove="Microsoft.ML.OnnxRuntime" />
     <None Remove="$(MSBuildThisFileDirectory)..\Models\*.*" />
+    <!-- Valve's OpenVR (SDK 2.15.6, win64) for Start with SteamVR. -->
+    <None Include="$(MSBuildThisFileDirectory)..\ThirdParty\OpenVR\openvr_api.dll" Link="openvr_api.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <PackageReference Include="Avalonia" Version="$(AvaloniaVersion)" />
     <PackageReference Include="Avalonia.Desktop" Version="$(AvaloniaVersion)" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="$(AvaloniaVersion)" />

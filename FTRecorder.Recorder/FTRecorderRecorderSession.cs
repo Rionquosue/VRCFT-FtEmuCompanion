@@ -8,8 +8,6 @@ namespace Riry.RiryTools.FTRecorder
     internal sealed class FTRecorderRecorderSettings
     {
         internal string Output;
-        internal int InPort = 9010;
-        internal int OutPort = 9000;
         internal string Microphone;
         /// <summary>ffmpeg's input format for the microphone: dshow on Windows.</summary>
         internal string MicrophoneFormat = OperatingSystem.IsWindows() ? "dshow" : "pulse";
@@ -19,7 +17,7 @@ namespace Riry.RiryTools.FTRecorder
     }
 
     /// <summary>
-    /// One recording: VRCFaceTracking's OSC output through the proxy, visemes (from VRChat's OSC while it runs, else
+    /// One recording: VRCFaceTracking's OSC output from the running proxy (the relay), visemes (from VRChat's OSC while it runs, else
     /// OVRLipSync on the microphone) and the microphone, into working files next to the output, combined into one
     /// .mkv when stopped.
     /// </summary>
@@ -32,13 +30,16 @@ namespace Riry.RiryTools.FTRecorder
         private readonly bool vrchat;
         private FTRecorderOvrLipSync lipSync;
         private FTRecorderRecordingWriter writer;
-        private FTRecorderProxy forwarder;
+        private readonly FTRecorderProxy relay;
+        private long packetsAtStart;
+        private bool recordingRelay;
         private FTRecorderVrchatListener listener;
         private FTRecorderMicrophone microphone;
 
-        private FTRecorderRecorderSession(FTRecorderRecorderSettings settings, Action<string> log)
+        private FTRecorderRecorderSession(FTRecorderRecorderSettings settings, FTRecorderProxy relay, Action<string> log)
         {
             this.settings = settings;
+            this.relay = relay;
             this.log = log;
             // The working files sit next to the output until it is written, so a crash keeps what was recorded.
             data = settings.Output + ".recording.ftrec.jsonl";
@@ -47,14 +48,15 @@ namespace Riry.RiryTools.FTRecorder
         }
 
         /// <summary>
-        /// Starts recording. Blocks (ffmpeg and OVRLipSync are checked first), so it is called off the window's thread.
-        /// ask is given the error when OVRLipSync cannot be found or loaded and returns a path, or null to stop.
+        /// Starts recording what the running relay passes on. Blocks (ffmpeg and OVRLipSync are checked first), so it is
+        /// called off the window's thread. ask is given the error when OVRLipSync cannot be found or loaded and returns a
+        /// path, or null to stop. The relay is not stopped by the session.
         /// </summary>
-        internal static FTRecorderRecorderSession Start(FTRecorderRecorderSettings settings, Func<string, string> ask, Action<string> log)
+        internal static FTRecorderRecorderSession Start(FTRecorderRecorderSettings settings, FTRecorderProxy relay, Func<string, string> ask, Action<string> log)
         {
             if (string.IsNullOrWhiteSpace(settings.Output)) throw new ArgumentException("Choose where the recording goes.");
-            if (settings.InPort == settings.OutPort) throw new ArgumentException("The two ports must differ.");
-            var session = new FTRecorderRecorderSession(settings, log);
+            if (relay == null) throw new InvalidOperationException("The relay is not running: see the error above, or change the ports.");
+            var session = new FTRecorderRecorderSession(settings, relay, log);
             try
             {
                 session.Open(ask);
@@ -89,9 +91,10 @@ namespace Riry.RiryTools.FTRecorder
             try
             {
                 log("Microphone: " + settings.Microphone);
-                writer = new FTRecorderRecordingWriter(data, "vrcft-proxy:" + settings.InPort + "->" + settings.OutPort + "; " + (vrchat ? "vrchat-visemes" : "ovrlipsync-visemes") + "; microphone");
-                forwarder = new FTRecorderProxy(settings.InPort, settings.OutPort, writer);
-                log("VRCFaceTracking: set its OSC output port to " + settings.InPort + "; passing on to " + settings.OutPort + ".");
+                writer = new FTRecorderRecordingWriter(data, "vrcft-proxy:" + relay.InPort + "->" + relay.OutPort + "; " + (vrchat ? "vrchat-visemes" : "ovrlipsync-visemes") + "; microphone");
+                packetsAtStart = Interlocked.Read(ref relay.Packets);
+                relay.SetWriter(writer);
+                recordingRelay = true;
                 if (vrchat)
                 {
                     listener = new FTRecorderVrchatListener(() => writer.Now, writer.WriteParameter);
@@ -111,11 +114,10 @@ namespace Riry.RiryTools.FTRecorder
         internal string Status()
         {
             // Read once: Stop clears them from another thread.
-            FTRecorderProxy f = forwarder;
             FTRecorderVrchatListener l = listener;
             FTRecorderMicrophone m = microphone;
-            if (f == null || m == null) return "";
-            return Interlocked.Read(ref f.Packets) + " VRCFaceTracking packets, " + (l != null ? Interlocked.Read(ref l.Received) + " VRChat viseme values, " : "") +
+            if (m == null) return "";
+            return "Recording: " + (Interlocked.Read(ref relay.Packets) - packetsAtStart) + " VRCFaceTracking packets, " + (l != null ? Interlocked.Read(ref l.Received) + " VRChat viseme values, " : "") +
                    (Interlocked.Read(ref m.Blocks) / 100.0).ToString("0") + " s of microphone";
         }
 
@@ -145,12 +147,12 @@ namespace Riry.RiryTools.FTRecorder
         // Everything started is stopped; the writer is closed last, after the threads that write to it.
         private void Close()
         {
-            forwarder?.Dispose();
+            if (recordingRelay) relay.SetWriter(null);
+            recordingRelay = false;
             listener?.Dispose();
             microphone?.Dispose();
             writer?.Dispose();
             lipSync?.Dispose();
-            forwarder = null;
             listener = null;
             microphone = null;
             writer = null;
@@ -163,15 +165,15 @@ namespace Riry.RiryTools.FTRecorder
 // GLOSSARY: FTRecorder Recorder session
 // ============================================================================
 //
-// FTRecorderRecorderSettings (this file)  Output (.mkv), InPort 9010 (VRCFaceTracking's OSC output port), OutPort 9000
-//                            (where its packets are passed on: VRChat, or FTEmulator), Microphone (a dshow name),
+// FTRecorderRecorderSettings (this file)  Output (.mkv), Microphone (a dshow name),
 //                            MicrophoneFormat (dshow; pulse off Windows), Ffmpeg (null: ffmpeg on PATH), OvrLipSync
 //                            (empty: VRChat's copy).
 // FTRecorderRecorderSession (this file)  One recording of the Recorder app.
-//   Start(settings, ask, log)  Checks the output and working files (Output.recording.ftrec.jsonl,
+//   Start(settings, relay, ask, log)  Records what the running relay (FTRecorderProxy, kept running) passes on. Checks
+//                            the output and working files (Output.recording.ftrec.jsonl,
 //                            Output.microphone.s16le) do not exist, ffmpeg (Check); VRChat not running (checked once,
-//                            here) -> OVRLipSync through FTRecorderVisemeGenerator.Open with ask; then FTRecorderProxy,
+//                            here) -> OVRLipSync through FTRecorderVisemeGenerator.Open with ask; then the relay's writer,
 //                            FTRecorderVrchatListener (VRChat running) and FTRecorderMicrophone. Blocking.
-//   Status()                 Packets, VRChat viseme values and seconds of microphone so far.
-//   Stop()                   Closes everything, then FTRecorderCaptions + FTRecorderMatroska.WriteWithRawAudio; deletes
+//   Status()                 Packets recorded, VRChat viseme values and seconds of microphone so far.
+//   Stop()                   Detaches the writer from the relay (which keeps relaying), closes the rest, then FTRecorderCaptions + FTRecorderMatroska.WriteWithRawAudio; deletes
 //                            the working files once the .mkv is written, keeps them (and says where) if not. Blocking.

@@ -6,24 +6,36 @@ using System.Threading;
 namespace Riry.RiryTools.FTRecorder
 {
     /// <summary>
-    /// Sits between VRCFaceTracking and VRChat: VRCFaceTracking's OSC output port is set to inPort, every packet that
-    /// arrives there from this computer is passed on unchanged to VRChat on outPort, and recorded as it passes.
+    /// Sits between VRCFaceTracking and VRChat: VRCFaceTracking's OSC output port is set to inPort, and every packet that
+    /// arrives there from this computer is passed on unchanged to VRChat on outPort for as long as the proxy runs. While a
+    /// writer is attached (SetWriter), each packet is also recorded as it passes.
     /// </summary>
     internal sealed class FTRecorderProxy : IDisposable
     {
         private readonly UdpClient receiver;
         private readonly UdpClient sender;
         private readonly IPEndPoint target;
-        private readonly FTRecorderRecordingWriter writer;
+        private readonly object writerGate = new object();
+        private FTRecorderRecordingWriter writer;
         private readonly Thread thread;
         private volatile bool stopping;
 
         internal long Packets;
+        internal readonly int InPort;
+        internal readonly int OutPort;
 
-        internal FTRecorderProxy(int inPort, int outPort, FTRecorderRecordingWriter writer)
+        /// <summary>Starts (a writer) or stops (null) recording the packets; they are passed on either way.</summary>
+        internal void SetWriter(FTRecorderRecordingWriter value)
+        {
+            // Under the lock, so a packet is never written to a writer that is being closed.
+            lock (writerGate) writer = value;
+        }
+
+        internal FTRecorderProxy(int inPort, int outPort)
         {
             if (inPort == outPort) throw new ArgumentException("The proxy's in and out ports must differ.");
-            this.writer = writer;
+            InPort = inPort;
+            OutPort = outPort;
             target = new IPEndPoint(IPAddress.Loopback, outPort);
             try
             {
@@ -66,7 +78,7 @@ namespace Riry.RiryTools.FTRecorder
                 {
                     // VRChat not running: the packet is still recorded.
                 }
-                writer.WriteOsc(writer.Now, packet, packet.Length);
+                lock (writerGate) writer?.WriteOsc(writer.Now, packet, packet.Length);
                 Interlocked.Increment(ref Packets);
             }
         }
@@ -85,5 +97,6 @@ namespace Riry.RiryTools.FTRecorder
 // GLOSSARY: FTRecorder proxy
 // ============================================================================
 //
-// FTRecorderProxy (this file)  127.0.0.1:inPort to 127.0.0.1:outPort, unchanged; loopback senders only; each packet
-//                            recorded as an Osc entry. Packets counts them.
+// FTRecorderProxy (this file)  127.0.0.1:inPort to 127.0.0.1:outPort, unchanged, for as long as it runs; loopback
+//                            senders only. Packets counts them. SetWriter(writer) records each as an Osc entry until
+//                            SetWriter(null). InPort, OutPort.
