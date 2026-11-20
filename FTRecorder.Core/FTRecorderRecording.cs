@@ -52,10 +52,23 @@ namespace Riry.RiryTools.FTRecorder
 
         /// <summary>
         /// Reads a recording: one JSON object per line, the first the header. A line that is not valid is refused with its
-        /// number; entries are kept in time order as written.
+        /// number; entries are kept in time order as written. An .mkv recording is read through ffmpeg (the recording
+        /// attached to it).
         /// </summary>
-        internal static FTRecorderRecording Load(string path)
+        internal static FTRecorderRecording Load(string path, string ffmpeg = null)
         {
+            if (FTRecorderMatroska.IsMatroska(path))
+            {
+                string extracted = FTRecorderMatroska.ExtractRecording(ffmpeg, path);
+                try
+                {
+                    return Load(extracted);
+                }
+                finally
+                {
+                    Directory.Delete(Path.GetDirectoryName(extracted), true);
+                }
+            }
             var recording = new FTRecorderRecording();
             int number = 0;
             foreach (string line in File.ReadLines(path))
@@ -296,7 +309,7 @@ namespace Riry.RiryTools.FTRecorder
 //   Viseme                   {"t":s,"viseme":n,"voice":v,"weights":[15]}  made from audio; VRChat's viseme order.
 //
 // FTRecorderRecording (this file)
-//   Load(path)               Reads a recording; a bad line is refused with its number. Source, Created, Unified, Eye,
+//   Load(path, ffmpeg)       Reads a recording (an .mkv through ffmpeg); a bad line is refused with its number. Source, Created, Unified, Eye,
 //                            Entries (in written order), Duration (last entry's time).
 // FTRecorderEntry            Time, Kind (Expressions, Osc, Parameter, Viseme) and that kind's fields.
 // FTRecorderRecordingWriter  Writes as it happens, from any thread; flushed at least once a second.

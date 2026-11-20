@@ -67,7 +67,7 @@ namespace Riry.RiryTools.FTRecorder
             seen = 0;
             switch (config.Source)
             {
-                case FTRecorderModuleConfig.SourcePlayback: source = new FTRecorderPlaybackSource(config.PlaybackFile, config.Loop); break;
+                case FTRecorderModuleConfig.SourcePlayback: source = new FTRecorderPlaybackSource(config.PlaybackFile, config.Loop, config.FfmpegPath); break;
                 case FTRecorderModuleConfig.SourceVideo: source = new FTRecorderCameraSource(config, false); break;
                 case FTRecorderModuleConfig.SourceBabbleOsc: source = new FTRecorderBabbleOscSource(config.BabbleOscPort); break;
                 case FTRecorderModuleConfig.SourceWebcam: source = new FTRecorderCameraSource(config, true); break;

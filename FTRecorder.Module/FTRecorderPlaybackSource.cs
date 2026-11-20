@@ -14,12 +14,15 @@ namespace Riry.RiryTools.FTRecorder
     {
         private readonly string path;
         private readonly bool loop;
+        private readonly string ffmpeg;
         private bool eyes = true;
 
-        internal FTRecorderPlaybackSource(string path, bool loop)
+        /// <param name="ffmpeg">For .mkv recordings, read through ffmpeg.</param>
+        internal FTRecorderPlaybackSource(string path, bool loop, string ffmpeg)
         {
             this.path = path;
             this.loop = loop;
+            this.ffmpeg = ffmpeg;
         }
 
         internal override bool ProvidesEyes => eyes;
@@ -31,7 +34,7 @@ namespace Riry.RiryTools.FTRecorder
                 Status = "No recording at \"" + path + "\": set playbackFile.";
                 return;
             }
-            FTRecorderRecording recording = FTRecorderRecording.Load(path);
+            FTRecorderRecording recording = FTRecorderRecording.Load(path, ffmpeg);
             var frames = new List<FTRecorderEntry>();
             foreach (FTRecorderEntry entry in recording.Entries)
             {
@@ -91,6 +94,7 @@ namespace Riry.RiryTools.FTRecorder
 // GLOSSARY: FTRecorder playback source
 // ============================================================================
 //
-// FTRecorderPlaybackSource (this file)  A recording's expression frames at their recorded times, matched by name;
+// FTRecorderPlaybackSource (this file)  A recording's expression frames (.ftrec.jsonl, or .mkv through ffmpeg) at their
+//                            recorded times, matched by name;
 //                            loops when asked. A recording without expression frames is reported, not played.
 //   ProvidesEyes             False when the recording has none of the eye names.

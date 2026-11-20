@@ -14,13 +14,15 @@ namespace Riry.RiryTools.FTRecorder
 
         private const string Usage = @"RiryTools FTRecorder companion
 
-  record --out FILE [--proxy IN:OUT] [--mic NAME] [--ffmpeg PATH] [--ovrlipsync PATH]
-      Records both VRCFaceTracking's output and visemes.
+  record --out FILE.mkv [--proxy IN:OUT] [--mic NAME] [--ffmpeg PATH] [--ovrlipsync PATH]
+      Records VRCFaceTracking's output, visemes and your microphone into one Matroska file: the microphone as
+      audio, the visemes as a subtitle track, and the whole recording attached. Until Ctrl+C the parts are kept
+      next to it (FILE.mkv.recording.ftrec.jsonl, FILE.mkv.microphone.s16le).
       --proxy IN:OUT   Default 9010:9000. Set VRCFaceTracking's OSC output port to IN; its packets are passed on
                        to VRChat on OUT (VRChat's input port) and recorded.
       Visemes: while VRChat is running, the Viseme and Voice it sends over OSC (it finds the listener through
-      OSCQuery; OSC must be on in VRChat). When VRChat is not running, your microphone (--mic, else the first
-      one ffmpeg lists) goes through OVRLipSync, found as for process.
+      OSCQuery; OSC must be on in VRChat). When VRChat is not running, the microphone goes through OVRLipSync,
+      found as for process. --mic picks the microphone (else the first one ffmpeg lists).
       Stops with Ctrl+C.
 
   process --video FILE --out FILE [--ffmpeg PATH] [--babble-model PATH] [--babble-labels PATH]
@@ -34,7 +36,7 @@ namespace Riry.RiryTools.FTRecorder
       loaded, you are asked for its path. --visemes ovrlipsync or classifier picks an engine whether VRChat runs
       or not; classifier is FTRecorder's own.
 
-  replay --in FILE [--port PORT] [--loop]
+  replay --in FILE [--port PORT] [--loop] [--ffmpeg PATH]
       Sends recorded OSC, VRChat parameters and visemes to 127.0.0.1:PORT (9000) at their times. Expression
       frames are played by the VRCFaceTracking module's playback source instead.
 ";
@@ -117,33 +119,39 @@ namespace Riry.RiryTools.FTRecorder
             if (ports.Length != 2 || !int.TryParse(ports[0], out int inPort) || !int.TryParse(ports[1], out int outPort) ||
                 inPort < 1 || inPort > 65535 || outPort < 1 || outPort > 65535)
                 throw new ArgumentException("--proxy takes IN:OUT, two port numbers.");
+            // The working files sit next to the output until it is written, so a crash keeps what was recorded.
+            string data = output + ".recording.ftrec.jsonl";
+            string audio = output + ".microphone.s16le";
             // Checked first, so nothing is started for a recording that cannot be written.
-            if (File.Exists(output)) throw new IOException("The output already exists: " + output);
+            foreach (string path in new[] { output, data, audio })
+            {
+                if (File.Exists(path)) throw new IOException("Already exists: " + path);
+            }
+            string ffmpeg = Optional(options, "--ffmpeg");
             bool vrchat = FTRecorderVrchatInstall.IsRunning();
             using CancellationTokenSource cancel = CtrlC();
-            // Without VRChat the emulation needs OVRLipSync and a microphone, found before anything is recorded.
+            // The microphone is recorded either way; without VRChat it also feeds OVRLipSync. Both are found first.
             FTRecorderOvrLipSync lipSync = null;
-            FTRecorderFfmpeg microphone = null;
             if (!vrchat)
             {
                 lipSync = FTRecorderVisemeGenerator.Open(Optional(options, "--ovrlipsync"), Console.IsInputRedirected ? null : AskPath, out string loaded);
                 Console.WriteLine("VRChat is not running: visemes from your microphone through OVRLipSync (" + loaded + ").");
-                string ffmpeg = Optional(options, "--ffmpeg");
-                string mic = Optional(options, "--mic") ?? (OperatingSystem.IsWindows() ? FTRecorderFfmpeg.FirstMicrophone(ffmpeg) : null);
-                if (string.IsNullOrWhiteSpace(mic))
-                {
-                    lipSync.Dispose();
-                    throw new ArgumentException("No microphone found: give its name with --mic (ffmpeg -list_devices true -f dshow -i dummy lists them).");
-                }
-                microphone = FTRecorderFfmpeg.OpenMicrophone(ffmpeg, OperatingSystem.IsWindows() ? "dshow" : "pulse", mic);
-                Console.WriteLine("Microphone: " + mic);
             }
+            string mic = Optional(options, "--mic") ?? (OperatingSystem.IsWindows() ? FTRecorderFfmpeg.FirstMicrophone(ffmpeg) : null);
+            if (string.IsNullOrWhiteSpace(mic))
+            {
+                lipSync?.Dispose();
+                throw new ArgumentException("No microphone found: give its name with --mic (ffmpeg -list_devices true -f dshow -i dummy lists them).");
+            }
+            FTRecorderFfmpeg capture = FTRecorderFfmpeg.OpenMicrophone(ffmpeg, OperatingSystem.IsWindows() ? "dshow" : "pulse", mic);
+            Console.WriteLine("Microphone: " + mic);
+            double audioStart;
             using (lipSync)
-            using (var writer = new FTRecorderRecordingWriter(output, "vrcft-proxy:" + inPort + "->" + outPort + "; " + (vrchat ? "vrchat-visemes" : "ovrlipsync-visemes")))
+            using (var writer = new FTRecorderRecordingWriter(data, "vrcft-proxy:" + inPort + "->" + outPort + "; " + (vrchat ? "vrchat-visemes" : "ovrlipsync-visemes") + "; microphone"))
             {
                 FTRecorderProxy forwarder = null;
                 FTRecorderVrchatListener listener = null;
-                FTRecorderLiveVisemes live = null;
+                FTRecorderMicrophone microphone = null;
                 try
                 {
                     forwarder = new FTRecorderProxy(inPort, outPort, writer);
@@ -153,22 +161,37 @@ namespace Riry.RiryTools.FTRecorder
                         listener = new FTRecorderVrchatListener(() => writer.Now, writer.WriteParameter);
                         Console.WriteLine(listener.Discoverable ? "VRChat is running: recording the Viseme and Voice it sends (OSC must be on in VRChat)." : "VRChat is running, but it cannot find the viseme listener: multicast DNS is unavailable.");
                     }
-                    else live = new FTRecorderLiveVisemes(lipSync, microphone, writer);
-                    Console.WriteLine("Recording to " + writer.Path + ". Ctrl+C stops.");
+                    microphone = new FTRecorderMicrophone(capture, audio, lipSync, writer);
+                    capture = null;
+                    Console.WriteLine("Recording to " + output + ". Ctrl+C stops.");
                     while (!cancel.Token.WaitHandle.WaitOne(5000))
                     {
-                        Console.WriteLine(forwarder.Packets + " VRCFaceTracking packets, " + (vrchat ? listener.Received + " VRChat viseme values" : Interlocked.Read(ref live.Frames) + " viseme frames"));
+                        Console.WriteLine(forwarder.Packets + " VRCFaceTracking packets, " + (vrchat ? listener.Received + " VRChat viseme values, " : "") +
+                                          (Interlocked.Read(ref microphone.Blocks) / 100.0).ToString("0") + " s of microphone");
                     }
                 }
                 finally
                 {
                     forwarder?.Dispose();
                     listener?.Dispose();
-                    if (live != null) live.Dispose();
-                    else microphone?.Dispose();
+                    microphone?.Dispose();
+                    capture?.Dispose();
                 }
-                Console.WriteLine("Saved " + writer.Path);
+                audioStart = microphone.AudioStart;
             }
+            Console.WriteLine("Writing " + output);
+            string captions = FTRecorderCaptions.Build(FTRecorderRecording.Load(data));
+            try
+            {
+                FTRecorderMatroska.Write(ffmpeg, data, audio, FTRecorderMicrophone.SampleRate, audioStart, captions, output);
+            }
+            catch (Exception exception) when (exception is InvalidOperationException || exception is IOException)
+            {
+                throw new InvalidOperationException(exception.Message + " The recording is kept in " + data + " and " + audio + ".", exception);
+            }
+            File.Delete(data);
+            File.Delete(audio);
+            Console.WriteLine("Saved " + output);
             return 0;
         }
 
@@ -231,7 +254,7 @@ namespace Riry.RiryTools.FTRecorder
 
         private static int Replay(Dictionary<string, string> options)
         {
-            FTRecorderRecording recording = FTRecorderRecording.Load(Required(options, "--in"));
+            FTRecorderRecording recording = FTRecorderRecording.Load(Required(options, "--in"), Optional(options, "--ffmpeg"));
             int port = (int)Number(options, "--port", 9000, 1, 65535);
             using CancellationTokenSource cancel = CtrlC();
             Console.WriteLine("Replaying " + recording.Entries.Count + " entries (" + recording.Duration.ToString("0.0") + " s) to 127.0.0.1:" + port + ". Ctrl+C stops.");
@@ -246,10 +269,12 @@ namespace Riry.RiryTools.FTRecorder
 // ============================================================================
 //
 // FTRecorderCompanion (this file)  Command line entry point.
-//   record --out FILE [--proxy IN:OUT] [--mic NAME] [--ffmpeg PATH] [--ovrlipsync PATH]  FTRecorderProxy
-//                            (DefaultProxy 9010:9000) and visemes into one recording until Ctrl+C; counts every 5 s.
-//                            Visemes: VRChat running (checked at start) -> FTRecorderVrchatListener; otherwise
-//                            FTRecorderLiveVisemes (microphone: --mic, else ffmpeg's first dshow audio device).
+//   record --out FILE.mkv [--proxy IN:OUT] [--mic NAME] [--ffmpeg PATH] [--ovrlipsync PATH]  FTRecorderProxy
+//                            (DefaultProxy 9010:9000), visemes and FTRecorderMicrophone (--mic, else ffmpeg's first
+//                            dshow audio device) until Ctrl+C; counts every 5 s. Visemes: VRChat running (checked at
+//                            start) -> FTRecorderVrchatListener; otherwise OVRLipSync on the microphone. Working files
+//                            FILE.recording.ftrec.jsonl and FILE.microphone.s16le, then FTRecorderMatroska.Write with
+//                            FTRecorderCaptions; the working files are deleted once the .mkv is written, kept if not.
 //   process --video FILE --out FILE [...]  FTRecorderVideoProcessor (--ffmpeg, --babble-model, --babble-labels,
 //                            --babble-crop 1, --visemes ovrlipsync|classifier (forces an engine), --ovrlipsync (else
 //                            VRChat's copy), --cable (DefaultCable "CABLE Input": with VRChat running and no --visemes,
@@ -257,5 +282,5 @@ namespace Riry.RiryTools.FTRecorder
 //                            --fps 30, --size 640, --threads half the cores).
 //   AskPath(reason)          Prints the error, then reads a path from the console; empty gives up. Not used without a
 //                            console (input redirected): the error then ends the run.
-//   replay --in FILE [--port 9000] [--loop]  FTRecorderReplay.
+//   replay --in FILE [--port 9000] [--loop] [--ffmpeg PATH]  FTRecorderReplay (.mkv read through ffmpeg).
 //   Exit codes               0 done, 1 bad arguments, a fault, or stopped.
