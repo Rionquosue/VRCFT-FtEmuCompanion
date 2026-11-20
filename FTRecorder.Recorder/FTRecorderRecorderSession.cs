@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.IO;
 using System.Threading;
 
@@ -7,7 +8,8 @@ namespace Riry.RiryTools.FTRecorder
     /// <summary>What one recording uses: the Recorder window's fields.</summary>
     internal sealed class FTRecorderRecorderSettings
     {
-        internal string Output;
+        /// <summary>The output folder; the recording is named there when it starts (OutputName).</summary>
+        internal string Folder;
         internal string Microphone;
         /// <summary>ffmpeg's input format for the microphone: dshow on Windows.</summary>
         internal string MicrophoneFormat = OperatingSystem.IsWindows() ? "dshow" : "pulse";
@@ -25,6 +27,7 @@ namespace Riry.RiryTools.FTRecorder
     {
         private readonly FTRecorderRecorderSettings settings;
         private readonly Action<string> log;
+        private readonly string output;
         private readonly string data;
         private readonly string audio;
         private readonly bool vrchat;
@@ -41,9 +44,10 @@ namespace Riry.RiryTools.FTRecorder
             this.settings = settings;
             this.relay = relay;
             this.log = log;
+            output = OutputName(settings.Folder, DateTime.Now);
             // The working files sit next to the output until it is written, so a crash keeps what was recorded.
-            data = settings.Output + ".recording.ftrec.jsonl";
-            audio = settings.Output + ".microphone.s16le";
+            data = WorkingData(output);
+            audio = WorkingAudio(output);
             vrchat = FTRecorderVrchatInstall.IsRunning();
         }
 
@@ -54,7 +58,7 @@ namespace Riry.RiryTools.FTRecorder
         /// </summary>
         internal static FTRecorderRecorderSession Start(FTRecorderRecorderSettings settings, FTRecorderProxy relay, Func<string, string> ask, Action<string> log)
         {
-            if (string.IsNullOrWhiteSpace(settings.Output)) throw new ArgumentException("Choose where the recording goes.");
+            if (string.IsNullOrWhiteSpace(settings.Folder)) throw new ArgumentException("Choose the output folder.");
             if (relay == null) throw new InvalidOperationException("The relay is not running: see the error above, or change the ports.");
             var session = new FTRecorderRecorderSession(settings, relay, log);
             try
@@ -71,13 +75,7 @@ namespace Riry.RiryTools.FTRecorder
 
         private void Open(Func<string, string> ask)
         {
-            // Checked first, so nothing is started for a recording that cannot be written.
-            foreach (string path in new[] { settings.Output, data, audio })
-            {
-                if (File.Exists(path)) throw new IOException("Already exists: " + path);
-            }
-            string folder = Path.GetDirectoryName(Path.GetFullPath(settings.Output));
-            if (!string.IsNullOrEmpty(folder)) Directory.CreateDirectory(folder);
+            Directory.CreateDirectory(settings.Folder);
             FTRecorderFfmpeg.Check(settings.Ffmpeg);
             // The microphone is recorded either way; without VRChat it also feeds OVRLipSync. Both are found first.
             if (!vrchat)
@@ -102,13 +100,31 @@ namespace Riry.RiryTools.FTRecorder
                 }
                 microphone = new FTRecorderMicrophone(capture, audio, lipSync, writer);
                 capture = null;
-                log("Recording to " + settings.Output);
+                log("Recording to " + output);
             }
             finally
             {
                 capture?.Dispose();
             }
         }
+
+        /// <summary>
+        /// FTRecording-HHmm-ddMMyy.mkv in folder (24-hour time, the date as day, month, two-digit year), with " (2)",
+        /// " (3)" and on added when that name, or its working files, already exist.
+        /// </summary>
+        internal static string OutputName(string folder, DateTime time)
+        {
+            string name = "FTRecording-" + time.ToString("HHmm", CultureInfo.InvariantCulture) + "-" + time.ToString("ddMMyy", CultureInfo.InvariantCulture);
+            for (int number = 1; ; number++)
+            {
+                string path = Path.Combine(folder, name + (number == 1 ? "" : " (" + number + ")") + ".mkv");
+                if (!File.Exists(path) && !File.Exists(WorkingData(path)) && !File.Exists(WorkingAudio(path))) return path;
+            }
+        }
+
+        private static string WorkingData(string output) => output + ".recording.ftrec.jsonl";
+
+        private static string WorkingAudio(string output) => output + ".microphone.s16le";
 
         /// <summary>The counts so far, for the window's status line.</summary>
         internal string Status()
@@ -129,11 +145,11 @@ namespace Riry.RiryTools.FTRecorder
         {
             double audioStart = microphone?.AudioStart ?? -1;
             Close();
-            log("Writing " + settings.Output);
+            log("Writing " + output);
             string captions = FTRecorderCaptions.Build(FTRecorderRecording.Load(data));
             try
             {
-                FTRecorderMatroska.WriteWithRawAudio(settings.Ffmpeg, data, audio, FTRecorderMicrophone.SampleRate, audioStart, captions, settings.Output);
+                FTRecorderMatroska.WriteWithRawAudio(settings.Ffmpeg, data, audio, FTRecorderMicrophone.SampleRate, audioStart, captions, output);
             }
             catch (Exception exception) when (exception is InvalidOperationException || exception is IOException)
             {
@@ -141,7 +157,7 @@ namespace Riry.RiryTools.FTRecorder
             }
             File.Delete(data);
             File.Delete(audio);
-            log("Saved " + settings.Output);
+            log("Saved " + output);
         }
 
         // Everything started is stopped; the writer is closed last, after the threads that write to it.
@@ -165,15 +181,17 @@ namespace Riry.RiryTools.FTRecorder
 // GLOSSARY: FTRecorder Recorder session
 // ============================================================================
 //
-// FTRecorderRecorderSettings (this file)  Output (.mkv), Microphone (a dshow name),
+// FTRecorderRecorderSettings (this file)  Folder (the output folder), Microphone (a dshow name),
 //                            MicrophoneFormat (dshow; pulse off Windows), Ffmpeg (null: ffmpeg on PATH), OvrLipSync
 //                            (empty: VRChat's copy).
 // FTRecorderRecorderSession (this file)  One recording of the Recorder app.
-//   Start(settings, relay, ask, log)  Records what the running relay (FTRecorderProxy, kept running) passes on. Checks
-//                            the output and working files (Output.recording.ftrec.jsonl,
-//                            Output.microphone.s16le) do not exist, ffmpeg (Check); VRChat not running (checked once,
+//   Start(settings, relay, ask, log)  Records what the running relay (FTRecorderProxy, kept running) passes on, to
+//                            OutputName(Folder, now) (the folder is created), working files NAME.mkv.recording.ftrec.jsonl
+//                            and NAME.mkv.microphone.s16le. Checks ffmpeg (Check); VRChat not running (checked once,
 //                            here) -> OVRLipSync through FTRecorderVisemeGenerator.Open with ask; then the relay's writer,
 //                            FTRecorderVrchatListener (VRChat running) and FTRecorderMicrophone. Blocking.
+//   OutputName(folder, time)  FTRecording-HHmm-ddMMyy.mkv (24-hour, no separators); " (2)", " (3)"... when it or its
+//                            working files exist.
 //   Status()                 Packets recorded, VRChat viseme values and seconds of microphone so far.
 //   Stop()                   Detaches the writer from the relay (which keeps relaying), closes the rest, then FTRecorderCaptions + FTRecorderMatroska.WriteWithRawAudio; deletes
 //                            the working files once the .mkv is written, keeps them (and says where) if not. Blocking.

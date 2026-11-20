@@ -43,11 +43,11 @@ namespace Riry.RiryTools.FTRecorder
             Height = 560;
             MinWidth = 480;
             MinHeight = 400;
-            output.Text = NewOutputPath();
+            output.Text = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "RiryTools FTRecorder");
 
             var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"), Margin = new Thickness(16), RowSpacing = 8, ColumnSpacing = 8 };
             int row = 0;
-            AddRow(grid, ref row, "Recording (.mkv)", output, Browse("Browse…", ChooseOutput));
+            AddRow(grid, ref row, "Output", output, Browse("Browse…", ChooseOutput));
             AddRow(grid, ref row, "VRCFaceTracking OSC output port", inPort, Hint("Set VRCFaceTracking's OSC output port to this."));
             AddRow(grid, ref row, "Pass on to port", outPort, Hint("VRChat's OSC input port (9000)."));
             AddRow(grid, ref row, "Microphone", microphone, null);
@@ -117,13 +117,6 @@ namespace Riry.RiryTools.FTRecorder
                 grid.Children.Add(extra);
             }
             row++;
-        }
-
-        // A new name in Documents\RiryTools FTRecorder each time, so recordings never collide.
-        private static string NewOutputPath()
-        {
-            string folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "RiryTools FTRecorder");
-            return Path.Combine(folder, "recording-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".mkv");
         }
 
         private string FfmpegPath => string.IsNullOrWhiteSpace(ffmpeg.Text) ? null : ffmpeg.Text.Trim();
@@ -251,7 +244,7 @@ namespace Riry.RiryTools.FTRecorder
             if (microphone.SelectedItem == null) await ListMicrophones();
             var settings = new FTRecorderRecorderSettings
             {
-                Output = output.Text?.Trim(),
+                Folder = output.Text?.Trim(),
                 Microphone = microphone.SelectedItem as string,
                 Ffmpeg = FfmpegPath,
                 OvrLipSync = ovrLipSync.Text?.Trim(),
@@ -276,7 +269,6 @@ namespace Riry.RiryTools.FTRecorder
             try
             {
                 await Task.Run(stopping.Stop);
-                output.Text = NewOutputPath();
             }
             catch (Exception exception) when (IsExpected(exception))
             {
@@ -332,14 +324,8 @@ namespace Riry.RiryTools.FTRecorder
 
         private async Task ChooseOutput()
         {
-            IStorageFile file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
-            {
-                Title = "Recording",
-                DefaultExtension = "mkv",
-                SuggestedFileName = Path.GetFileName(output.Text ?? ""),
-                FileTypeChoices = new[] { new FilePickerFileType("Matroska") { Patterns = new[] { "*.mkv" } } },
-            });
-            string path = file?.TryGetLocalPath();
+            IReadOnlyList<IStorageFolder> folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = "Output", AllowMultiple = false });
+            string path = folders.Count > 0 ? folders[0].TryGetLocalPath() : null;
             if (path != null) output.Text = path;
         }
 
@@ -375,10 +361,11 @@ namespace Riry.RiryTools.FTRecorder
 // ============================================================================
 //
 // FTRecorderRecorderWindow (this file)  The Recorder's only window.
-//   Fields                   Recording (.mkv; a new Documents\RiryTools FTRecorder\recording-<time>.mkv after each save),
+//   Fields                   Output (a folder, Documents\RiryTools FTRecorder; each recording is named there by
+//                            FTRecorderRecorderSession.OutputName when it starts; Browse opens a folder picker),
 //                            VRCFaceTracking OSC output port (9010), Pass on to port (9000), Microphone (ffmpeg's dshow
-//                            list, first chosen), ffmpeg ("ffmpeg"), OVRLipSync.dll (empty: VRChat's copy). Browse
-//                            buttons open file pickers. Fields are locked while recording.
+//                            list, first chosen), ffmpeg ("ffmpeg"), OVRLipSync.dll (empty: VRChat's copy). The other
+//                            Browse buttons open file pickers. Fields are locked while recording.
 //   Relay                    FTRecorderProxy from the first port to the second whenever the window is open (restarted
 //                            when a port changes; disposed when the window closes). The status line shows its packets
 //                            when not recording.
