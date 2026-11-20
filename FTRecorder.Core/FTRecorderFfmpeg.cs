@@ -37,7 +37,7 @@ namespace Riry.RiryTools.FTRecorder
             }
             catch (System.ComponentModel.Win32Exception exception)
             {
-                throw new FileNotFoundException("ffmpeg was not found at \"" + start.FileName + "\". Install ffmpeg and set its path.", start.FileName, exception);
+                throw new FileNotFoundException(NotFound(start.FileName), start.FileName, exception);
             }
             output = process.StandardOutput.BaseStream;
             errorReader = new Thread(ReadErrors) { IsBackground = true, Name = "RiryTools FTRecorder ffmpeg errors" };
@@ -60,6 +60,53 @@ namespace Riry.RiryTools.FTRecorder
             catch (Exception exception) when (exception is IOException || exception is ObjectDisposedException || exception is InvalidOperationException)
             {
                 // ffmpeg was closed.
+            }
+        }
+
+        /// <summary>The message for an ffmpeg that cannot be started: what was looked for, and how to fix it.</summary>
+        internal static string NotFound(string ffmpeg)
+        {
+            return "ffmpeg was not found (looked for \"" + (string.IsNullOrWhiteSpace(ffmpeg) ? "ffmpeg" : ffmpeg) + "\"). Install ffmpeg from " +
+                   "https://ffmpeg.org/download.html and add it to PATH, or give its full path (--ffmpeg, or ffmpegPath in the module's settings).";
+        }
+
+        /// <summary>Throws FileNotFoundException with NotFound's message when ffmpeg cannot be started.</summary>
+        internal static void Check(string ffmpeg)
+        {
+            (int code, string _) = Run(ffmpeg, new List<string> { "-hide_banner", "-version" }, 15000);
+            if (code != 0) throw new FileNotFoundException(NotFound(ffmpeg), ffmpeg);
+        }
+
+        /// <summary>Runs ffmpeg to the end without a shell; its exit code and error output come back. Throws when it cannot start.</summary>
+        internal static (int code, string errors) Run(string ffmpeg, List<string> arguments, int timeout)
+        {
+            var start = new ProcessStartInfo(string.IsNullOrWhiteSpace(ffmpeg) ? "ffmpeg" : ffmpeg)
+            {
+                UseShellExecute = false,
+                RedirectStandardError = true,
+                RedirectStandardOutput = true,
+                CreateNoWindow = true,
+            };
+            foreach (string argument in arguments) start.ArgumentList.Add(argument);
+            Process process;
+            try
+            {
+                process = Process.Start(start) ?? throw new InvalidOperationException("ffmpeg did not start.");
+            }
+            catch (System.ComponentModel.Win32Exception exception)
+            {
+                throw new FileNotFoundException(NotFound(ffmpeg), start.FileName, exception);
+            }
+            using (process)
+            {
+                process.StandardOutput.ReadToEndAsync();
+                string errors = process.StandardError.ReadToEnd();
+                if (!process.WaitForExit(timeout))
+                {
+                    process.Kill(true);
+                    return (-1, "ffmpeg took too long. " + errors.Trim());
+                }
+                return (process.ExitCode, errors.Trim());
             }
         }
 
@@ -219,4 +266,8 @@ namespace Riry.RiryTools.FTRecorder
 //   FirstMicrophone(ffmpeg)  The first "(audio)" device ffmpeg's dshow listing names, or null.
 //   ReadExactly(buffer)      Fills buffer from ffmpeg's output; false at the end.
 //   Errors                   ffmpeg's error output so far (8 KB at most).
+//   NotFound(ffmpeg)         The not-found message: what was looked for; install from ffmpeg.org, add to PATH or give
+//                            the path (--ffmpeg, ffmpegPath). Every failed start throws FileNotFoundException with it.
+//   Check(ffmpeg)            Runs ffmpeg -version; throws with NotFound's message when it fails.
+//   Run(ffmpeg, arguments, timeout)  Runs to the end; exit code and error output.
 //   Dispose()                Once, from any thread: sends "q", waits 2 s, then kills.

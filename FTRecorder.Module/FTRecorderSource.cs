@@ -50,7 +50,8 @@ namespace Riry.RiryTools.FTRecorder
             catch (Exception exception)
             {
                 // The thread must not end without a trace.
-                if (!Stopping) Status = "Stopped: " + exception.GetType().Name + ": " + exception.Message;
+                // A missing file (ffmpeg, a model) is said plainly; anything else with its type.
+                if (!Stopping) Status = exception is System.IO.FileNotFoundException ? exception.Message : "Stopped: " + exception.GetType().Name + ": " + exception.Message;
             }
         }
 
@@ -107,7 +108,8 @@ namespace Riry.RiryTools.FTRecorder
 // ============================================================================
 //
 // FTRecorderSource (this file)  Base of the module's sources: one thread each, newest frame kept.
-//   Start()                  Runs Run() on a background thread; an exception ends it with Status set.
+//   Start()                  Runs Run() on a background thread; an exception ends it with Status set (a missing file,
+//                            such as ffmpeg, by its message alone).
 //   Publish(unified, eye)    The newest frame (copied; eye null keeps the last eyes).
 //   TryRead(ref seen, unified, eye)  Copies the newest frame when its sequence differs from seen.
 //   Status                   What the source is doing or its last fault.

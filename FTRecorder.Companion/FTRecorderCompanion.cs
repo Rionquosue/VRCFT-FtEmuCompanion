@@ -25,10 +25,12 @@ namespace Riry.RiryTools.FTRecorder
       found as for process. --mic picks the microphone (else the first one ffmpeg lists).
       Stops with Ctrl+C.
 
-  process --video FILE --out FILE [--ffmpeg PATH] [--babble-model PATH] [--babble-labels PATH]
+  process --video FILE --out FILE.mkv [--ffmpeg PATH] [--babble-model PATH] [--babble-labels PATH]
           [--babble-crop SCALE] [--visemes ovrlipsync|classifier] [--ovrlipsync PATH] [--cable NAME] [--fps N]
           [--size N] [--threads N]
-      Runs a recorded video through the face models (MediaPipe; Babble too when --babble-model is given).
+      Runs a recorded video through the face models (MediaPipe; Babble too when --babble-model is given) into
+      one Matroska file: the video's sound as audio, the visemes as a subtitle track, and the whole recording
+      (face data and visemes) attached. Until it is written the data is kept in FILE.mkv.recording.ftrec.jsonl.
       Visemes: while VRChat is running, the video's sound is played into VRChat through a virtual audio cable
       (--cable, default ""CABLE Input""; set VRChat's microphone to the cable's output) and the Viseme and Voice
       VRChat sends over OSC are recorded, at the video's own speed. When VRChat is not running, the sound goes
@@ -37,6 +39,7 @@ namespace Riry.RiryTools.FTRecorder
       or not; classifier is FTRecorder's own.
 
   replay --in FILE [--port PORT] [--loop] [--ffmpeg PATH]
+  Every command that uses ffmpeg checks for it first and says how to install it when it is missing.
       Sends recorded OSC, VRChat parameters and visemes to 127.0.0.1:PORT (9000) at their times. Expression
       frames are played by the VRCFaceTracking module's playback source instead.
 ";
@@ -128,6 +131,7 @@ namespace Riry.RiryTools.FTRecorder
                 if (File.Exists(path)) throw new IOException("Already exists: " + path);
             }
             string ffmpeg = Optional(options, "--ffmpeg");
+            FTRecorderFfmpeg.Check(ffmpeg);
             bool vrchat = FTRecorderVrchatInstall.IsRunning();
             using CancellationTokenSource cancel = CtrlC();
             // The microphone is recorded either way; without VRChat it also feeds OVRLipSync. Both are found first.
@@ -183,7 +187,7 @@ namespace Riry.RiryTools.FTRecorder
             string captions = FTRecorderCaptions.Build(FTRecorderRecording.Load(data));
             try
             {
-                FTRecorderMatroska.Write(ffmpeg, data, audio, FTRecorderMicrophone.SampleRate, audioStart, captions, output);
+                FTRecorderMatroska.WriteWithRawAudio(ffmpeg, data, audio, FTRecorderMicrophone.SampleRate, audioStart, captions, output);
             }
             catch (Exception exception) when (exception is InvalidOperationException || exception is IOException)
             {
@@ -197,10 +201,13 @@ namespace Riry.RiryTools.FTRecorder
 
         private static int Process(Dictionary<string, string> options)
         {
+            string output = Required(options, "--out");
+            // The face and viseme data go to a working file next to the output until the .mkv is written.
+            string data = output + ".recording.ftrec.jsonl";
             var settings = new FTRecorderVideoOptions
             {
                 Video = Required(options, "--video"),
-                Output = Required(options, "--out"),
+                Output = data,
                 Ffmpeg = Optional(options, "--ffmpeg"),
                 BabbleModel = Optional(options, "--babble-model"),
                 BabbleLabels = Optional(options, "--babble-labels"),
@@ -215,13 +222,17 @@ namespace Riry.RiryTools.FTRecorder
             };
             // An engine named with --visemes is used whether VRChat runs or not; otherwise VRChat decides.
             string engine = Visemes(options);
+            if (!File.Exists(settings.Video)) throw new FileNotFoundException("The video was not found.", settings.Video);
+            foreach (string path in new[] { output, data })
+            {
+                if (File.Exists(path)) throw new IOException("Already exists: " + path);
+            }
+            FTRecorderFfmpeg.Check(settings.Ffmpeg);
             using CancellationTokenSource cancel = CtrlC();
             try
             {
                 if (engine == null && FTRecorderVrchatInstall.IsRunning())
                 {
-                    if (!File.Exists(settings.Video)) throw new FileNotFoundException("The video was not found.", settings.Video);
-                    if (File.Exists(settings.Output)) throw new IOException("The output already exists: " + settings.Output);
                     Console.WriteLine("VRChat is running: its visemes are recorded while the video's sound plays into it.");
                     settings.VrchatVisemes = FTRecorderVrchatVisemes.Capture(settings.Ffmpeg, settings.Video, Optional(options, "--cable") ?? DefaultCable, Console.WriteLine, cancel.Token);
                 }
@@ -229,10 +240,21 @@ namespace Riry.RiryTools.FTRecorder
             }
             catch (OperationCanceledException)
             {
-                Console.Error.WriteLine(File.Exists(settings.Output) ? "Stopped; the recording so far is in " + settings.Output : "Stopped.");
+                Console.Error.WriteLine(File.Exists(data) ? "Stopped; the recording so far is in " + data : "Stopped.");
                 return 1;
             }
-            Console.WriteLine("Saved " + settings.Output);
+            Console.WriteLine("Writing " + output);
+            string captions = FTRecorderCaptions.Build(FTRecorderRecording.Load(data));
+            try
+            {
+                FTRecorderMatroska.WriteWithAudioOf(settings.Ffmpeg, data, settings.Video, captions, output);
+            }
+            catch (Exception exception) when (exception is InvalidOperationException || exception is IOException)
+            {
+                throw new InvalidOperationException(exception.Message + " The recording is kept in " + data + ".", exception);
+            }
+            File.Delete(data);
+            Console.WriteLine("Saved " + output);
             return 0;
         }
 
@@ -254,7 +276,9 @@ namespace Riry.RiryTools.FTRecorder
 
         private static int Replay(Dictionary<string, string> options)
         {
-            FTRecorderRecording recording = FTRecorderRecording.Load(Required(options, "--in"), Optional(options, "--ffmpeg"));
+            string input = Required(options, "--in");
+            if (File.Exists(input) && FTRecorderMatroska.IsMatroska(input)) FTRecorderFfmpeg.Check(Optional(options, "--ffmpeg"));
+            FTRecorderRecording recording = FTRecorderRecording.Load(input, Optional(options, "--ffmpeg"));
             int port = (int)Number(options, "--port", 9000, 1, 65535);
             using CancellationTokenSource cancel = CtrlC();
             Console.WriteLine("Replaying " + recording.Entries.Count + " entries (" + recording.Duration.ToString("0.0") + " s) to 127.0.0.1:" + port + ". Ctrl+C stops.");
@@ -275,7 +299,10 @@ namespace Riry.RiryTools.FTRecorder
 //                            start) -> FTRecorderVrchatListener; otherwise OVRLipSync on the microphone. Working files
 //                            FILE.recording.ftrec.jsonl and FILE.microphone.s16le, then FTRecorderMatroska.Write with
 //                            FTRecorderCaptions; the working files are deleted once the .mkv is written, kept if not.
-//   process --video FILE --out FILE [...]  FTRecorderVideoProcessor (--ffmpeg, --babble-model, --babble-labels,
+//   process --video FILE --out FILE.mkv [...]  FTRecorderVideoProcessor into FILE.mkv.recording.ftrec.jsonl, then
+//                            FTRecorderMatroska.WriteWithAudioOf (the video's audio) with FTRecorderCaptions; the working
+//                            file is deleted once the .mkv is written, kept if not. ffmpeg checked first (Check).
+//                            Processing: (--ffmpeg, --babble-model, --babble-labels,
 //                            --babble-crop 1, --visemes ovrlipsync|classifier (forces an engine), --ovrlipsync (else
 //                            VRChat's copy), --cable (DefaultCable "CABLE Input": with VRChat running and no --visemes,
 //                            FTRecorderVrchatVisemes first),

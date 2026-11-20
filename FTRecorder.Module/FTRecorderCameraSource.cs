@@ -47,6 +47,8 @@ namespace Riry.RiryTools.FTRecorder
                 }
                 input = config.VideoFile;
             }
+            // Said at once, before the models load, when ffmpeg is missing.
+            FTRecorderFfmpeg.Check(config.FfmpegPath);
             int size = Math.Clamp(config.FrameSize, 128, 1920);
             using var tracker = new FTRecorderFaceTracker(config.BabbleModel, config.BabbleLabels, config.BabbleCropScale, config.Threads);
             var frame = new FTRecorderFrame(size, size);
