@@ -33,6 +33,10 @@ def pyinstaller(one_file: bool) -> None:
                  # readline (GPL) is not needed: the one console question works without it.
                  "--exclude-module", "readline",
                  "--onefile" if one_file else "--onedir"]
+    if os.name == "nt":
+        # Started on its own (double-clicked, or by SteamVR) the console window is hidden as the bootloader starts;
+        # started from a terminal, the terminal is left alone and the command line prints there.
+        arguments += ["--hide-console", "hide-early"]
     for source, target in data:
         arguments += ["--add-data", source + separator + target]
     arguments.append(os.path.join(PACKAGING, "ftrecorder_app.py"))
@@ -85,8 +89,8 @@ if __name__ == "__main__":
 # build.py (this file)     The compiled app, built by .github/workflows/build.yml (and by hand).
 #   pyinstaller(one_file)    PyInstaller on packaging/ftrecorder_app.py with every ftrecorder module, onnxruntime's libraries, and the
 #                            data Models/, NOTICE.md, LICENSE (and ThirdParty/OpenVR on Windows), laid out as in the
-#                            repository so the code finds them; readline (GPL) left out. Windows: one file; Linux: a
-#                            folder.
+#                            repository so the code finds them; readline (GPL) left out. Windows: one file, its own
+#                            console window hidden as it starts (--hide-console hide-early); Linux: a folder.
 #   appimage(appimagetool)   AppDir: usr/bin/RiryTools-FTRecorder/ (the folder), AppRun, ftrecorder.desktop,
 #                            ftrecorder.png and .DirIcon; packed (no AppStream data) into
 #                            dist/RiryTools-FTRecorder-x86_64.AppImage.
