@@ -79,7 +79,7 @@ def _write_manifest() -> None:
     application.update({
         "is_dashboard_overlay": True,
         "strings": {"en_us": {"name": "RiryTools FTRecorder Recorder",
-                              "description": "Relays VRCFaceTracking's OSC output to VRChat and records it on demand."}},
+                              "description": "Records the avatar parameters VRChat sends over OSC."}},
     })
     manifest = {"applications": [application]}
     os.makedirs(os.path.dirname(manifest_path()), exist_ok=True)

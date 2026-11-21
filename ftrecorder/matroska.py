@@ -1,4 +1,4 @@
-"""The one-file form of a recording: a Matroska (.mkv) file with the audio (Opus), the picture when there is one, the
+"""The one-file form of a recording: a Matroska (.mkv) file with the picture and audio (Opus) when there are any, the
 visemes as a subtitle track, and the whole recording (.ftrec.jsonl) attached. Written and read through the user's ffmpeg."""
 
 from __future__ import annotations
@@ -19,17 +19,14 @@ def is_matroska(path: str) -> bool:
         return file.read(4) == _MAGIC
 
 
-def write_with_raw_audio(ffmpeg: str | None, recording: str, audio: str | None, sample_rate: int, audio_start: float,
-                         captions: str | None, output: str) -> None:
-    """A recording with raw 16-bit mono PCM audio at sample_rate (starting audio_start seconds into the recording; None
-    or an empty file for none) and SRT captions (None for none). Raises RuntimeError with ffmpeg's error on failure."""
-    has_audio = bool(audio) and os.path.isfile(audio) and os.path.getsize(audio) > 0
-    media = ["-f", "s16le", "-ar", str(sample_rate), "-ac", "1", "-itsoffset", "%.3f" % max(0.0, audio_start), "-i", audio] if has_audio else []
-    _write(ffmpeg, recording, media, False, has_audio, "48k", captions, output)
+def write_recording(ffmpeg: str | None, recording: str, captions: str | None, output: str) -> None:
+    """A recording with SRT captions (None for none) and no picture or sound. Raises RuntimeError with ffmpeg's error
+    on failure."""
+    _write(ffmpeg, recording, [], False, False, "48k", captions, output)
 
 
 def write_with_video(ffmpeg: str | None, recording: str, video: str, captions: str | None, output: str) -> None:
-    """Like write_with_raw_audio, with a video file's first video track copied unchanged and its first audio track (none
+    """Like write_recording, with a video file's first video track copied unchanged and its first audio track (none
     when it has none) as Opus, both from the video's start."""
     # Asked first: mapping a missing audio track fails the whole write.
     code, _ = ff.run(ffmpeg, ["-hide_banner", "-loglevel", "error", "-nostdin", "-i", video, "-map", "0:a:0", "-t", "0", "-f", "null", "-"], 60)
@@ -89,10 +86,9 @@ def extract_recording(ffmpeg: str | None, mkv: str) -> str:
 # ============================================================================
 #
 # matroska (this file)     One-file recordings (.mkv) through the user's ffmpeg.
-#   write_with_raw_audio(ffmpeg, recording, audio, rate, start, captions, output)  Opus 48 kb/s from raw s16le (offset
-#                            by start; none when audio is None or empty), an SRT subtitle track titled "Visemes", and the
-#                            recording attached as recording.ftrec.jsonl (application/x-ndjson). For the Recorder. With
-#                            no video, audio or captions, 20 ms of silence is the track (a Matroska file needs one).
+#   write_recording(ffmpeg, recording, captions, output)  An SRT subtitle track titled "Visemes" and the recording attached
+#                            as recording.ftrec.jsonl (application/x-ndjson). For the Recorder. With no video, audio or
+#                            captions, 20 ms of silence is the track (a Matroska file needs one).
 #   write_with_video(ffmpeg, recording, video, captions, output)  The video's first video track copied, its first audio
 #                            track (checked first) as Opus 96 kb/s. For process.
 #   extract_recording(ffmpeg, mkv)  The attachment copied to a new temporary folder; its path.

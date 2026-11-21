@@ -1,11 +1,10 @@
 """Video frames and audio through the user's own ffmpeg (not bundled). ffmpeg is started with an argument list, never
 through a shell, and writes raw data to its standard output: frames as RGB fitted into a square with black borders, and
-audio as mono 16-bit samples."""
+a file's audio as mono 16-bit samples."""
 
 from __future__ import annotations
 
 import os
-import re
 import subprocess
 import sys
 import threading
@@ -41,7 +40,7 @@ def not_found(ffmpeg: str | None) -> str:
 
 
 class Cancelled(Exception):
-    """The work was stopped (Ctrl+C, or the Recorder's Stop)."""
+    """The work was stopped (Ctrl+C)."""
 
 
 class FfmpegNotFound(FileNotFoundError):
@@ -181,72 +180,6 @@ def read_audio(ffmpeg: str | None, video: str, sample_rate: int = 16000, cancel:
     return samples
 
 
-def open_microphone(ffmpeg: str | None, microphone: "Microphone") -> Stream:
-    """Live audio from a microphone as 16 kHz mono 16-bit samples."""
-    return Stream(ffmpeg, ["-hide_banner", "-loglevel", "error", "-f", microphone.format, "-i", microphone.device,
-                           "-ac", "1", "-ar", "16000", "-f", "s16le", "-"])
-
-
-class Microphone:
-    """A capture device: what the Recorder lists (label), and ffmpeg's input format and device for it."""
-
-    def __init__(self, label: str, format: str, device: str):
-        self.label = label
-        self.format = format
-        self.device = device
-
-    def __repr__(self):
-        return self.label
-
-
-def list_microphones(ffmpeg: str | None) -> list[Microphone]:
-    """The microphones ffmpeg can open here: DirectShow on Windows; PipeWire/PulseAudio (through ffmpeg's pulse input,
-    which PipeWire serves) and ALSA on Linux. Raises FfmpegNotFound when ffmpeg cannot be started."""
-    if os.name == "nt":
-        _, errors = run(ffmpeg, ["-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy"], 15)
-        found = []
-        for line in errors.splitlines():
-            # Lines look like: [dshow @ 000001] "Microphone (Realtek Audio)" (audio)
-            if "(audio)" not in line:
-                continue
-            first, last = line.find('"'), line.rfind('"')
-            if 0 <= first < last:
-                name = line[first + 1:last]
-                found.append(Microphone(name, "dshow", "audio=" + name))
-        return found
-    found = []
-    for name, description in _sources(ffmpeg, "pulse"):
-        # A monitor is what a speaker plays, not a microphone.
-        if not name.endswith(".monitor"):
-            found.append(Microphone("PipeWire/PulseAudio: " + (description or name), "pulse", name))
-    for name, description in _sources(ffmpeg, "alsa"):
-        # ALSA's default device and its cards (plughw converts formats); its plugins (resamplers, jack, oss) are not
-        # microphones.
-        if name == "default" or name.startswith("plughw:"):
-            found.append(Microphone("ALSA: " + (description or name) + " (" + name + ")", "alsa", name))
-    return found
-
-
-_SOURCE_LINE = re.compile(r"^\s*\*?\s*(\S+)\s+\[(.*)\]")
-
-
-def _sources(ffmpeg: str | None, format: str) -> list[tuple[str, str]]:
-    """ffmpeg -sources FORMAT: (name, description) pairs; empty when the system or ffmpeg has none."""
-    try:
-        done = subprocess.run([executable(ffmpeg), "-hide_banner", "-sources", format], stdin=subprocess.DEVNULL,
-                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15, creationflags=_HIDDEN, env=_environment())
-    except OSError as error:
-        raise FfmpegNotFound(not_found(ffmpeg)) from error
-    except subprocess.TimeoutExpired:
-        return []
-    pairs = []
-    for line in done.stdout.decode("utf-8", "replace").splitlines():
-        match = _SOURCE_LINE.match(line)
-        if match and not line.startswith("Auto-detected"):
-            pairs.append((match.group(1), match.group(2).strip()))
-    return pairs
-
-
 def _number(value: float) -> str:
     return ("%f" % value).rstrip("0").rstrip(".")
 
@@ -264,8 +197,3 @@ def _number(value: float) -> str:
 #   Stream                   A running ffmpeg: read_exactly(size), errors (8 KB), wait(timeout), close() ("q", then kill).
 #   open_video(ffmpeg, video, size, fps)  RGB frames fitted into size x size.
 #   read_audio(ffmpeg, video, rate, cancel)  The whole sound track, mono s16 ('h' array); empty without one.
-#   open_microphone(ffmpeg, microphone)  16 kHz mono s16 from a Microphone.
-#   list_microphones(ffmpeg)  Windows: dshow "(audio)" devices. Linux: ffmpeg -sources pulse (PipeWire/PulseAudio;
-#                            ".monitor" sources left out) and -sources alsa ("default" and "plughw:" cards only).
-#                            Nothing else.
-#   Microphone               label (shown), format (dshow, pulse, alsa) and device (ffmpeg's -i).

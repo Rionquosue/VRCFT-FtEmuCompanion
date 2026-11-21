@@ -152,20 +152,22 @@ def _read(path: str) -> str | None:
 
 
 class Listener:
-    """Records the visemes VRChat makes. VRChat sends avatar parameters to every OSCQuery service it finds that lists
-    /avatar; this one lists /avatar/parameters/Viseme and Voice, so VRChat sends them here. It is announced over
-    multicast DNS as "_oscjson._tcp" and "_osc._udp" at 127.0.0.1, answers HTTP on 127.0.0.1 only, and keeps only
-    Viseme and Voice from loopback senders."""
+    """Receives the avatar parameters VRChat sends. VRChat sends avatar parameters to every OSCQuery service it finds
+    that lists /avatar; this one lists /avatar/change and /avatar/parameters (with Viseme and Voice), so VRChat sends
+    them here. It is announced over multicast DNS as "_oscjson._tcp" and "_osc._udp" at 127.0.0.1, answers HTTP on
+    127.0.0.1 only, and keeps /avatar/parameters/ values from loopback senders: the names in kept, or every one when
+    kept is None."""
 
     _JSON_SERVICE = "_oscjson._tcp.local"
     _OSC_SERVICE = "_osc._udp.local"
     _MDNS_ADDRESS = "224.0.0.251"
     _MDNS_PORT = 5353
-    _KEPT = ("Viseme", "Voice")
+    VISEMES = ("Viseme", "Voice")
 
-    def __init__(self, clock, sink, log=None):
+    def __init__(self, clock, sink, log=None, kept=VISEMES):
         """clock() gives each value's time in seconds; sink(time, name, type, value) gets each kept value (type 'i',
-        'f' or 'b'). log gets problems with the network."""
+        'f' or 'b'). log gets problems with the network. kept: the parameter names kept, or None for every one."""
+        self._kept = kept
         self._clock = clock
         self._sink = sink
         self._log = log or (lambda text: print(text, file=sys.stderr))
@@ -225,7 +227,7 @@ class Listener:
                 if not message.address.startswith(osc.PARAMETER_PREFIX) or len(message.arguments) != 1:
                     continue
                 parameter = message.address[len(osc.PARAMETER_PREFIX):]
-                if parameter not in self._KEPT:
+                if self._kept is not None and parameter not in self._kept:
                     continue
                 tag, value = message.arguments[0]
                 if tag == "i":
@@ -421,8 +423,9 @@ def _ipv4_addresses() -> list[str]:
 #   find_ovrlipsync()        (path or None, VRChat folders searched): Steam's folder (registry on Windows, the usual
 #                            places on Linux), its libraryfolders.vdf libraries, appmanifest_438100.acf's installdir, then
 #                            VRChat_Data/Plugins/x86_64/OVRLipSync.dll (or any *LipSync*.dll in Plugins). Read only.
-#   Listener(clock, sink, log)  OSCQuery service (HTTP and OSC on 127.0.0.1, random ports) listing /avatar/parameters/
-#                            Viseme (i) and Voice (f), announced over multicast DNS (_oscjson._tcp, _osc._udp; every 15 s
-#                            and on PTR/ANY questions) from every interface's IPv4 address. Keeps Viseme and Voice from
-#                            loopback senders as sink(time, name, 'i'|'f'|'b', value); received counts them;
+#   Listener(clock, sink, log, kept)  OSCQuery service (HTTP and OSC on 127.0.0.1, random ports) listing /avatar/change
+#                            and /avatar/parameters/ Viseme (i) and Voice (f), announced over multicast DNS (_oscjson._tcp,
+#                            _osc._udp; every 15 s and on PTR/ANY questions) from every interface's IPv4 address. Keeps
+#                            the /avatar/parameters/ values named in kept (default VISEMES: Viseme and Voice; None: every
+#                            one) from loopback senders as sink(time, name, 'i'|'f'|'b', value); received counts them;
 #                            discoverable is False when multicast DNS could not be opened. close() stops it.

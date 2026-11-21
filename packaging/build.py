@@ -53,7 +53,7 @@ def appimage(appimagetool: str) -> str:
     shutil.copy(os.path.join(PACKAGING, "ftrecorder.png"), os.path.join(appdir, ".DirIcon"))
     with open(os.path.join(appdir, "ftrecorder.desktop"), "w", encoding="utf-8") as desktop:
         desktop.write("[Desktop Entry]\nType=Application\nName=RiryTools FTRecorder\n"
-                      "Comment=Relays VRCFaceTracking's OSC output to VRChat and records it\n"
+                      "Comment=Records the avatar parameters VRChat sends over OSC\n"
                       "Exec=%s\nIcon=ftrecorder\nCategories=AudioVideo;Utility;\nTerminal=false\n" % NAME)
     app_run = os.path.join(appdir, "AppRun")
     with open(app_run, "w", encoding="utf-8", newline="\n") as script:

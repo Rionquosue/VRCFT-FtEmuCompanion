@@ -1,5 +1,5 @@
-"""The Recorder window (Tkinter). While it is open it relays VRCFaceTracking's OSC output to VRChat; it records only
-between Start recording and Stop and save."""
+"""The Recorder window (Tkinter). Between Start recording and Stop and save it records every avatar parameter VRChat
+sends over OSC, found through OSCQuery."""
 
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ from tkinter.scrolledtext import ScrolledText
 
 from . import ffmpeg as ff
 from . import session as sessions
-from .relay import Relay
 
 TITLE = "RiryTools FTRecorder Recorder"
 _WINDOWS = os.name == "nt"
@@ -23,14 +22,11 @@ class RecorderWindow:
         self.root = root
         self.calls: queue.Queue = queue.Queue()
         self.session: sessions.Session | None = None
-        self.relay: Relay | None = None
         self.busy = False
         self.close_when_saved = False
-        self.microphones: list[ff.Microphone] = []
-        self._restart_pending = None
 
         root.title(TITLE)
-        root.minsize(560, 460)
+        root.minsize(560, 360)
         frame = ttk.Frame(root, padding=16)
         frame.grid(sticky="nsew")
         root.columnconfigure(0, weight=1)
@@ -38,12 +34,7 @@ class RecorderWindow:
         frame.columnconfigure(1, weight=1)
 
         self.output = tk.StringVar(value=os.path.join(os.path.expanduser("~"), "Documents", "RiryTools FTRecorder"))
-        self.in_port = tk.StringVar(value="9010")
-        self.out_port = tk.StringVar(value="9000")
-        self.microphone = tk.StringVar()
-        self.record_audio = tk.BooleanVar(value=True)
         self.ffmpeg = tk.StringVar(value="ffmpeg")
-        self.ovrlipsync = tk.StringVar()
         self.start_with_steamvr = tk.BooleanVar(value=False)
         self.status = tk.StringVar()
 
@@ -64,46 +55,11 @@ class RecorderWindow:
         self.fields.append(ttk.Button(frame, text="Browse…", command=self.choose_output))
         self.fields[-1].grid(row=row, column=2, sticky="w", padx=(8, 0))
         row += 1
-        label("VRCFaceTracking OSC output port")
-        self.fields.append(ttk.Spinbox(frame, from_=1, to=65535, textvariable=self.in_port, width=8))
-        self.fields[-1].grid(row=row, column=1, sticky="w")
-        hint("Set VRCFaceTracking's OSC output port to this.")
-        row += 1
-        label("Pass on to port")
-        self.fields.append(ttk.Spinbox(frame, from_=1, to=65535, textvariable=self.out_port, width=8))
-        self.fields[-1].grid(row=row, column=1, sticky="w")
-        hint("VRChat's OSC input port (9000).")
-        row += 1
-        label("Microphone")
-        self.microphone_box = ttk.Combobox(frame, textvariable=self.microphone, state="readonly", values=[])
-        self.microphone_box.grid(row=row, column=1, sticky="ew")
-        self.fields.append(self.microphone_box)
-        self.no_microphone = ttk.Label(frame, text="! " + sessions.NO_MIC_VISEMES, foreground="#b45309", wraplength=360)
-        self.no_microphone.grid(row=row, column=2, sticky="w", padx=(8, 0))
-        self.no_microphone.grid_remove()
-        self.microphone.set("Looking for microphones…")
-        row += 1
-        label("Audio")
-        self.fields.append(ttk.Checkbutton(frame, text="Record audio", variable=self.record_audio))
-        self.fields[-1].grid(row=row, column=1, sticky="w")
-        hint("Off: the microphone only makes visemes (Windows, VRChat not running).")
-        row += 1
         label("ffmpeg")
         self.fields.append(ttk.Entry(frame, textvariable=self.ffmpeg))
         self.fields[-1].grid(row=row, column=1, sticky="ew")
         self.fields.append(ttk.Button(frame, text="Browse…", command=self.choose_ffmpeg))
         self.fields[-1].grid(row=row, column=2, sticky="w", padx=(8, 0))
-        row += 1
-        label("OVRLipSync.dll")
-        lipsync_entry = ttk.Entry(frame, textvariable=self.ovrlipsync)
-        lipsync_entry.grid(row=row, column=1, sticky="ew")
-        if _WINDOWS:
-            self.fields.append(lipsync_entry)
-            self.fields.append(ttk.Button(frame, text="Browse…", command=self.choose_ovrlipsync))
-            self.fields[-1].grid(row=row, column=2, sticky="w", padx=(8, 0))
-        else:
-            lipsync_entry.configure(state="disabled")
-            hint("! " + sessions.LINUX_VISEMES).configure(foreground="#b45309")
         row += 1
         label("SteamVR")
         self.steamvr_box = ttk.Checkbutton(frame, text="Start with SteamVR", variable=self.start_with_steamvr, command=self.toggle_steamvr)
@@ -122,13 +78,9 @@ class RecorderWindow:
         self.log_view = ScrolledText(frame, height=10, wrap="word", state="disabled", font="TkDefaultFont")
         self.log_view.grid(row=row, column=0, columnspan=3, sticky="nsew")
 
-        self.in_port.trace_add("write", lambda *_: self.schedule_relay_restart())
-        self.out_port.trace_add("write", lambda *_: self.schedule_relay_restart())
         root.protocol("WM_DELETE_WINDOW", self.on_close)
-        self.restart_relay()
         self.root.after(50, self.pump)
-        self.root.after(1000, self.tick)
-        self.list_microphones()
+        self.tick()
         if _WINDOWS:
             self.in_background(self.load_steamvr)
 
@@ -162,69 +114,15 @@ class RecorderWindow:
             self.post(write)
 
     def tick(self):
-        self.status.set(self.session.status() if self.session else self.relay_status())
+        self.status.set(self.session.status() if self.session else "Not recording")
         self.root.after(1000, self.tick)
-
-    def relay_status(self) -> str:
-        relay = self.relay
-        return "Not relaying" if relay is None else "Relaying %d → %d: %d packets" % (relay.in_port, relay.out_port, relay.packets)
-
-    # The relay runs whenever the window is open: restarted when a port changes (the ports are locked while recording).
-    def schedule_relay_restart(self):
-        if self._restart_pending is not None:
-            self.root.after_cancel(self._restart_pending)
-        self._restart_pending = self.root.after(400, self.restart_relay)
-
-    def restart_relay(self):
-        self._restart_pending = None
-        if self.session is not None:
-            return
-        if self.relay is not None:
-            self.relay.close()
-            self.relay = None
-        try:
-            in_port, out_port = int(self.in_port.get()), int(self.out_port.get())
-            if not (1 <= in_port <= 65535 and 1 <= out_port <= 65535):
-                raise ValueError("Ports are numbers from 1 to 65535.")
-            self.relay = Relay(in_port, out_port, self.log)
-            self.log("Relaying VRCFaceTracking's output from port %d to %d (set VRCFaceTracking's OSC output port to %d)." % (in_port, out_port, in_port))
-        except (ValueError, RuntimeError) as error:
-            self.log("Error: not relaying: %s" % error)
 
     def ffmpeg_path(self):
         return self.ffmpeg.get().strip() or None
 
-    # The microphones ffmpeg lists; the first is chosen. None: the "!" notice, and recording without a microphone.
-    def list_microphones(self):
-        path = self.ffmpeg_path()
-
-        def work():
-            try:
-                found = ff.list_microphones(path)
-            except ff.FfmpegNotFound as error:
-                self.log(str(error))
-                found = []
-            self.post(lambda: self.show_microphones(found))
-        self.in_background(work)
-
-    def show_microphones(self, found):
-        chosen = self.microphone.get()
-        self.microphones = found
-        labels = [m.label for m in found]
-        self.microphone_box.configure(values=labels)
-        if labels:
-            self.microphone.set(chosen if chosen in labels else labels[0])
-            self.no_microphone.grid_remove()
-        else:
-            self.microphone.set("No microphone found")
-            self.no_microphone.grid()
-
-    def chosen_microphone(self):
-        return next((m for m in self.microphones if m.label == self.microphone.get()), None)
-
     def set_fields(self, enabled: bool):
         for field in self.fields:
-            field.configure(state=("readonly" if field is self.microphone_box else "normal") if enabled else "disabled")
+            field.configure(state="normal" if enabled else "disabled")
 
     def start_or_stop(self):
         if self.busy:
@@ -243,19 +141,19 @@ class RecorderWindow:
             self.root.destroy()
 
     def start(self):
-        path = self.ffmpeg_path()
-        settings = sessions.Settings(self.output.get().strip(), self.chosen_microphone(), self.record_audio.get(), path, self.ovrlipsync.get().strip() or None)
+        settings = sessions.Settings(self.output.get().strip(), self.ffmpeg_path())
         self.set_fields(False)
 
         def work():
-            # ffmpeg writes the .mkv: without it, a popup and nothing else (no recording, no folder, no file).
+            # Without ffmpeg (it writes the .mkv) or VRChat: a popup and nothing else (no recording, no folder, no file).
             try:
-                ff.check(path)
+                session = sessions.Session.start(settings, self.log)
             except ff.FfmpegNotFound:
                 self.post(self.ffmpeg_missing)
                 return
-            try:
-                session = sessions.Session.start(settings, self.relay, self.ask_ovrlipsync, self.log)
+            except sessions.VRChatNotRunning:
+                self.post(self.vrchat_missing)
+                return
             except (ValueError, RuntimeError, OSError) as error:
                 self.log("Error: %s" % error)
                 self.post(lambda: (self.set_fields(True), self.done()))
@@ -267,6 +165,11 @@ class RecorderWindow:
         messagebox.showerror("FFmpeg not found", "FFmpeg not found", parent=self.root,
                              detail='Looked for "%s". Install ffmpeg from https://ffmpeg.org/download.html and add it to PATH, '
                                     "or set its full path in the ffmpeg field." % (self.ffmpeg_path() or "ffmpeg"))
+        self.set_fields(True)
+        self.done()
+
+    def vrchat_missing(self):
+        messagebox.showerror(sessions.VRCHAT_NOT_RUNNING, sessions.VRCHAT_NOT_RUNNING, parent=self.root)
         self.set_fields(True)
         self.done()
 
@@ -292,15 +195,13 @@ class RecorderWindow:
     def stopped(self):
         self.session = None
         self.start_stop.configure(text="Start recording")
-        self.status.set(self.relay_status())
+        self.status.set("Not recording")
         self.set_fields(True)
         self.done()
 
     # Closing while recording stops and saves first.
     def on_close(self):
         if self.session is None and not self.busy:
-            if self.relay is not None:
-                self.relay.close()
             self.root.destroy()
             return
         if self.close_when_saved:
@@ -309,24 +210,6 @@ class RecorderWindow:
         self.log("Saving the recording before closing…")
         if self.session is not None and not self.busy:
             self.start_or_stop()
-
-    def ask_ovrlipsync(self, reason: str):
-        """From the session's thread when OVRLipSync cannot be found or loaded: the error, then a file picker;
-        cancelling it records without visemes."""
-        answer = {}
-        ready = threading.Event()
-
-        def ask():
-            self.log("Error: " + reason)
-            self.log("Choose OVRLipSync.dll (cancel to record without visemes).")
-            path = filedialog.askopenfilename(parent=self.root, title="OVRLipSync.dll", filetypes=[("OVRLipSync.dll", "*.dll")])
-            if path:
-                self.ovrlipsync.set(path)
-            answer["path"] = path or None
-            ready.set()
-        self.post(ask)
-        ready.wait()
-        return answer["path"]
 
     def choose_output(self):
         path = filedialog.askdirectory(parent=self.root, title="Output", initialdir=self.output.get() or None)
@@ -337,12 +220,6 @@ class RecorderWindow:
         path = filedialog.askopenfilename(parent=self.root, title="ffmpeg")
         if path:
             self.ffmpeg.set(path)
-            self.list_microphones()
-
-    def choose_ovrlipsync(self):
-        path = filedialog.askopenfilename(parent=self.root, title="OVRLipSync.dll", filetypes=[("OVRLipSync.dll", "*.dll")])
-        if path:
-            self.ovrlipsync.set(path)
 
     # SteamVR's own setting while it runs; otherwise whether the Recorder's manifest is there (it is removed when
     # unchecked), so SteamVR is not started just to look.
@@ -390,16 +267,10 @@ def main() -> None:
 #
 # recorder (this file)     The Recorder's only window (Tkinter); main() opens it.
 #   Fields                   Output (folder, Documents/RiryTools FTRecorder; each recording named by session.output_name
-#                            when it starts), VRCFaceTracking OSC output port (9010), Pass on to port (9000), Microphone
-#                            (ffmpeg.list_microphones, first chosen; none: "! Visemes will not be recorded without a mic"
-#                            beside it, and recording is still allowed), Record audio (on), ffmpeg, OVRLipSync.dll (empty:
-#                            VRChat's copy; Linux: disabled, "! Visemes are only available when VRChat is running."),
-#                            Start with SteamVR (Windows). Fields are locked while recording.
-#   Relay                    relay.Relay from the first port to the second whenever the window is open (restarted 0.4 s
-#                            after a port changes; closed with the window). The status line shows its packets.
-#   Start recording          ffmpeg checked first: missing -> the "FFmpeg not found" popup and nothing else. Then
-#                            session.Session.start off the window's thread; the counts every second.
+#                            when it starts), ffmpeg, Start with SteamVR (Windows). Fields are locked while recording.
+#   Start recording          session.Session.start off the window's thread: ffmpeg missing -> the "FFmpeg not found"
+#                            popup, VRChat not running -> the "VRChat is not running!" popup, and nothing else. The status
+#                            line counts the VRChat values every second ("Not recording" otherwise).
 #   Stop and save            session.Session.stop off the window's thread; errors in the log.
-#   ask_ovrlipsync(reason)   The error in the log, then a file picker; cancel records without visemes.
 #   Closing                  While recording: stops and saves, then closes; stays open when saving fails.
 #   Threads                  Background work posts calls; pump runs them on the window's thread every 50 ms.
